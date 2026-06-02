@@ -74,10 +74,10 @@ export default function LogsExplorer({ apiHost, apiKey, isOnline }) {
     const q = searchQuery.toLowerCase();
     if (!q) return logs;
     return logs.filter(log =>
-      log.id.toLowerCase().includes(q) ||
-      log.model?.toLowerCase().includes(q) ||
-      log.provider?.toLowerCase().includes(q) ||
-      log.reason?.toLowerCase().includes(q)
+      (log.id?.toLowerCase() || '').includes(q) ||
+      (log.model?.toLowerCase() || '').includes(q) ||
+      (log.provider?.toLowerCase() || '').includes(q) ||
+      (log.reason?.toLowerCase() || '').includes(q)
     );
   }, [logs, searchQuery]);
 
@@ -136,14 +136,15 @@ export default function LogsExplorer({ apiHost, apiKey, isOnline }) {
             </thead>
             <tbody>
               {filteredLogs.map(log => {
-                const isExpanded = expandedLogId === log.id;
-                const time = new Date(log.created_at).toLocaleTimeString();
+                const logId = log.id || '';
+                const isExpanded = expandedLogId === logId;
+                const time = log.created_at ? new Date(log.created_at).toLocaleTimeString() : 'N/A';
                 return (
-                  <React.Fragment key={log.id}>
-                    <tr onClick={() => setExpandedLogId(isExpanded ? null : log.id)}>
+                  <React.Fragment key={logId}>
+                    <tr onClick={() => setExpandedLogId(isExpanded ? null : logId)}>
                       <td style={{ color: 'var(--text-muted)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>{time}</td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>
-                        {log.id.slice(0, 14)}
+                        {logId ? logId.slice(0, 14) : 'N/A'}
                       </td>
                       <td><span className="badge">{log.original_model}</span></td>
                       <td>

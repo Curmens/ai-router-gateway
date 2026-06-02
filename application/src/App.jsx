@@ -2,16 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Terminal, Cpu, Settings as SettingsIcon,
-  RefreshCw, Search, Bell, HelpCircle, Activity
+  RefreshCw, Search, Bell, HelpCircle, Activity, MessageSquare
 } from 'lucide-react';
 import Preloader from './components/Preloader';
 import Dashboard from './components/Dashboard';
 import LogsExplorer from './components/LogsExplorer';
 import RouterView from './components/RouterView';
 import Settings from './components/Settings';
+import Playground from './components/Playground';
 
 const TABS = [
   { id: 'dashboard', label: 'Overview',      icon: LayoutDashboard, desc: 'Real-time gateway telemetry and provider health' },
+  { id: 'chat',      label: 'Playground',    icon: MessageSquare,   desc: 'Interactive chat client routed through gateway' },
   { id: 'canvas',    label: 'Router Flow',   icon: Cpu,             desc: 'Live 3D routing flow visualization' },
   { id: 'explorer',  label: 'Logs',          icon: Terminal,        desc: 'Query and inspect request audit traces' },
   { id: 'settings',  label: 'Settings',      icon: SettingsIcon,    desc: 'Gateway connection and provider configuration' },
@@ -97,8 +99,8 @@ export default function App() {
           const d = await logsRes.json();
           if (d.logs?.length > 0) {
             const logs = d.logs;
-            const sumLatency = logs.reduce((a, l) => a + (l.LatencyMs || 0), 0);
-            const errCount = logs.filter(l => l.Status !== 200).length;
+            const sumLatency = logs.reduce((a, l) => a + (l.latency_ms || 0), 0);
+            const errCount = logs.filter(l => l.status !== 200).length;
             setGatewayStats(prev => ({
               ...prev,
               avgLatency: Math.round(sumLatency / logs.length),
@@ -175,7 +177,7 @@ export default function App() {
 
           <nav className="channel-list">
             <div className="channel-category">Monitoring</div>
-            {TABS.slice(0, 3).map(tab => {
+            {TABS.slice(0, 4).map(tab => {
               const Icon = tab.icon;
               return (
                 <button
@@ -190,7 +192,7 @@ export default function App() {
             })}
 
             <div className="channel-category">System</div>
-            {TABS.slice(3).map(tab => {
+            {TABS.slice(4).map(tab => {
               const Icon = tab.icon;
               return (
                 <button
@@ -243,6 +245,9 @@ export default function App() {
               >
                 {activeTab === 'dashboard' && (
                   <Dashboard stats={gatewayStats} providers={providers} models={models} isOnline={isOnline} />
+                )}
+                {activeTab === 'chat' && (
+                  <Playground apiHost={settings.apiHost} apiKey={settings.apiKey} isOnline={isOnline} models={models} />
                 )}
                 {activeTab === 'canvas' && (
                   <RouterView providers={providers} models={models} apiHost={settings.apiHost} apiKey={settings.apiKey} isOnline={isOnline} />

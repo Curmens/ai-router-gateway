@@ -236,17 +236,17 @@ export default function RouterView({ providers, models, apiHost, apiKey, isOnlin
           });
           if (res.ok) {
             const d = await res.json();
-            if (d.logs?.[0] && d.logs[0].RequestID !== lastId) {
-              const log = d.logs[0]; lastId = log.RequestID;
+            if (d.logs?.[0] && d.logs[0].id !== lastId) {
+              const log = d.logs[0]; lastId = log.id;
               setLatest({
-                prompt: log.OriginalModel === 'orchestrated' ? 'Orchestrated agent task' : 'Chat completions call',
-                chosenProvider: log.ChosenProvider,
-                chosenModel: log.ChosenModel,
-                complexity: log.Complexity || 0.5,
-                confidence: log.Confidence || 1.0,
-                reason: log.Reason || 'Explicit route',
-                timestamp: new Date(log.CreatedAt).toLocaleTimeString(),
-                status: log.Status
+                prompt: log.prompt || (log.original_model === 'orchestrated' ? 'Orchestrated agent task' : 'Chat completions call'),
+                chosenProvider: log.provider,
+                chosenModel: log.model,
+                complexity: log.complexity || 0.5,
+                confidence: log.confidence || 1.0,
+                reason: log.reason || 'Explicit route',
+                timestamp: new Date(log.created_at).toLocaleTimeString(),
+                status: log.status
               });
             }
           }

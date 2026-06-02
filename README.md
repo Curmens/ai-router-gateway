@@ -193,3 +193,46 @@ Key sections:
 - `routing.auto_routing` — enable/disable classifier
 - `routing.failover.chains` — control provider fallback order
 - `server.api_keys` — manage access keys and rate limits
+
+---
+
+## Model Context Protocol (MCP) Integration
+
+Expose the dynamic auto-router gateway directly to external AI agents (such as Claude Desktop) via the native Go-based MCP server.
+
+### Available Tools
+The MCP server registers the following high-performance tools:
+1. `execute_routed_chat` — Executes chat completions via the dynamic classifier router with inline real-time gateway trace telemetry.
+2. `get_router_metrics` — Returns total requests handled, cost in USD, and prompt/completion token consumption metrics.
+3. `list_active_providers` — Retrieves status (🟢/🔴) and live average latency metrics for all upstream providers.
+4. `get_recent_traces` — Fetches the last $N$ request logs directly from Postgres showing the target routes, latencies, and complexity classifications.
+
+### Compilation
+Compile the lightweight, native Go MCP executable:
+```bash
+# Inside WSL Ubuntu
+go build -o bin/mcp cmd/mcp/main.go
+```
+
+### Claude Desktop Configuration
+Add the compiled MCP server configuration to your `claude_desktop_config.json` (typically located at `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
+
+```json
+{
+  "mcpServers": {
+    "auto-router": {
+      "command": "wsl",
+      "args": [
+        "-d",
+        "Ubuntu",
+        "--cd",
+        "/home/user1024/Projects/auto-router",
+        "./bin/mcp"
+      ]
+    }
+  }
+}
+```
+
+Restart your Claude Desktop client, and the tools will appear natively under the power plug icon!
+

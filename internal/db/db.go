@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS requests (
     latency_ms INT DEFAULT 0,
     status INT DEFAULT 200,
     error_message TEXT,
+    prompt TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -84,6 +85,12 @@ func runMigrations(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("migration execution failed: %w", err)
 	}
+	// Add prompt column if it doesn't exist (for existing databases)
+	_, err = Pool.Exec(ctx, "ALTER TABLE requests ADD COLUMN IF NOT EXISTS prompt TEXT;")
+	if err != nil {
+		logger.Log.Error("Failed to alter requests table to add prompt column", zap.Error(err))
+		return err
+	}
 	logger.Log.Info("PostgreSQL migrations executed successfully")
 	return nil
 }
@@ -98,14 +105,15 @@ type DBRequest struct {
 	LatencyMs        int
 	Status           int
 	ErrorMessage     string
+	Prompt           string
 }
 
 func SaveRequest(ctx context.Context, req DBRequest) error {
 	query := `
-		INSERT INTO requests (id, provider, model, prompt_tokens, completion_tokens, cost, latency_ms, status, error_message)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO requests (id, provider, model, prompt_tokens, completion_tokens, cost, latency_ms, status, error_message, prompt)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`
-	_, err := Pool.Exec(ctx, query, req.ID, req.Provider, req.Model, req.PromptTokens, req.CompletionTokens, req.Cost, req.LatencyMs, req.Status, req.ErrorMessage)
+	_, err := Pool.Exec(ctx, query, req.ID, req.Provider, req.Model, req.PromptTokens, req.CompletionTokens, req.Cost, req.LatencyMs, req.Status, req.ErrorMessage, req.Prompt)
 	if err != nil {
 		logger.Log.Error("Failed to save request to DB", zap.Error(err), zap.String("request_id", req.ID))
 		return err
@@ -177,14 +185,14 @@ func UpdateBudgetUsage(ctx context.Context, apiKey string, cost float64) error {
 }
 
 type UsageLogEntry struct {
-	ID               string
-	Provider         string
-	Model            string
-	PromptTokens     int
-	CompletionTokens int
-	Cost             float64
-	LatencyMs        int
-	CreatedAt        string
+	ID               string  `json:"id"`
+	Provider         string  `json:"provider"`
+	Model            string  `json:"model"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	Cost             float64 `json:"cost"`
+	LatencyMs        int     `json:"latency_ms"`
+	CreatedAt        string  `json:"created_at"`
 }
 
 type UsageLogFilter struct {
@@ -267,21 +275,22 @@ func GetUsageLogs(ctx context.Context, f UsageLogFilter) ([]UsageLogEntry, Usage
 }
 
 type RequestTrace struct {
-	RequestID      string
-	OriginalModel  string
-	ChosenProvider string
-	ChosenModel    string
-	RoutingType    string
-	Complexity     string
-	Confidence     float64
-	Reason         string
-	PromptTokens   int
-	CompletionTokens int
-	Cost           float64
-	LatencyMs      int
-	Status         int
-	ErrorMessage   string
-	CreatedAt      string
+	RequestID        string  `json:"id"`
+	OriginalModel    string  `json:"original_model"`
+	ChosenProvider   string  `json:"provider"`
+	ChosenModel      string  `json:"model"`
+	RoutingType      string  `json:"routing_type"`
+	Complexity       string  `json:"complexity"`
+	Confidence       float64 `json:"confidence"`
+	Reason           string  `json:"reason"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	Cost             float64 `json:"cost"`
+	LatencyMs        int     `json:"latency_ms"`
+	Status           int     `json:"status"`
+	ErrorMessage     string  `json:"error_message"`
+	CreatedAt        string  `json:"created_at"`
+	Prompt           string  `json:"prompt"`
 }
 
 type TraceFilter struct {
@@ -329,7 +338,7 @@ func GetRequestTraces(ctx context.Context, f TraceFilter) ([]RequestTrace, int64
 			COALESCE(a.reason, ''),
 			r.prompt_tokens, r.completion_tokens,
 			r.cost, r.latency_ms, r.status, COALESCE(r.error_message, ''),
-			r.created_at
+			r.created_at, COALESCE(r.prompt, '')
 		FROM requests r
 		LEFT JOIN audit_logs a ON a.request_id = r.id
 		WHERE %s
@@ -350,7 +359,7 @@ func GetRequestTraces(ctx context.Context, f TraceFilter) ([]RequestTrace, int64
 			&t.RoutingType, &t.Complexity, &t.Confidence,
 			&t.Reason, &t.PromptTokens, &t.CompletionTokens,
 			&t.Cost, &t.LatencyMs, &t.Status, &t.ErrorMessage,
-			&createdAt,
+			&createdAt, &t.Prompt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan trace row: %w", err)
 		}

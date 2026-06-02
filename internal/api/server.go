@@ -180,6 +180,11 @@ func (s *APIServer) handleChatCompletions(c *gin.Context) {
 	ctx := c.Request.Context()
 	logger.Log.Info("Received chat completions request", zap.String("id", reqID), zap.String("model", req.Model), zap.Bool("stream", req.Stream))
 
+	promptContent := ""
+	if len(req.Messages) > 0 {
+		promptContent = req.Messages[len(req.Messages)-1].Content
+	}
+
 	if req.Model == "orchestrated" {
 		start := time.Now()
 		resp, err := s.orchestrator.ExecuteOrchestrated(ctx, req, reqID)
@@ -199,6 +204,7 @@ func (s *APIServer) handleChatCompletions(c *gin.Context) {
 			Cost:             0.0,
 			LatencyMs:        int(duration.Milliseconds()),
 			Status:           http.StatusOK,
+			Prompt:           promptContent,
 		}
 		_ = db.SaveRequest(ctx, dbReq)
 
@@ -278,6 +284,7 @@ func (s *APIServer) handleChatCompletions(c *gin.Context) {
 			Status:       http.StatusInternalServerError,
 			ErrorMessage: err.Error(),
 			LatencyMs:    int(duration.Milliseconds()),
+			Prompt:       promptContent,
 		})
 		if dbErr != nil {
 			logger.Log.Error("Failed to save error request to database", zap.Error(dbErr))
@@ -312,6 +319,7 @@ func (s *APIServer) handleChatCompletions(c *gin.Context) {
 		Cost:             totalCost,
 		LatencyMs:        int(duration.Milliseconds()),
 		Status:           http.StatusOK,
+		Prompt:           promptContent,
 	}
 	_ = db.SaveRequest(ctx, dbReq)
 
@@ -348,7 +356,6 @@ func (s *APIServer) handleChatCompletions(c *gin.Context) {
 	telemetry.TokensTotal.WithLabelValues(chosenProv, chosenModel, "completion").Add(float64(resp.Usage.CompletionTokens))
 	telemetry.CostTotal.WithLabelValues(chosenProv, chosenModel, apiKey).Add(totalCost)
 
-	promptContent := req.Messages[len(req.Messages)-1].Content
 	cacheKey := cache.GenerateCacheKey(promptContent, req.Model, false)
 	respBytes, err := json.Marshal(resp)
 	if err == nil {
