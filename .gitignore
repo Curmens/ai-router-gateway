@@ -2,17 +2,26 @@
 configs/config.yaml
 
 # Claude Code local settings — contains allowed commands with keys
-.claude/settings.local.json
+.claude/
 
-# Build output
+# Go build output
 bin/
-
-# Go
 *.test
 *.out
+
+# Node / Electron
+application/node_modules/
+application/dist/
+application/out/
 
 # Environment files
 .env
 .env.*
 !.env.example
-bin/router
+
+# Graveyard — archived/replaced files
+graveyard/
+
+# OS
+.DS_Store
+Thumbs.db

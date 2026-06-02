@@ -1,0 +1,66 @@
+name: Auto Router
+version: 1.0.0
+schema: v1
+
+models:
+  - name: Auto (Smart Routing)
+    provider: openai
+    model: auto
+    apiBase: http://localhost:8080/v1
+    apiKey: ${{ secrets.ROUTER_API_KEY }}
+
+  - name: Claude Sonnet (Subscription)
+    provider: openai
+    model: claude-sonnet-4-5
+    apiBase: http://localhost:8080/v1
+    apiKey: ${{ secrets.ROUTER_API_KEY }}
+
+  - name: Claude Opus (Subscription)
+    provider: openai
+    model: claude-opus-4-5
+    apiBase: http://localhost:8080/v1
+    apiKey: ${{ secrets.ROUTER_API_KEY }}
+
+  - name: Gemini Flash
+    provider: openai
+    model: gemini-2.5-flash
+    apiBase: http://localhost:8080/v1
+    apiKey: ${{ secrets.ROUTER_API_KEY }}
+
+  - name: Gemini Pro
+    provider: openai
+    model: gemini-2.5-pro
+    apiBase: http://localhost:8080/v1
+    apiKey: ${{ secrets.ROUTER_API_KEY }}
+
+  - name: Ollama (Local)
+    provider: openai
+    model: qwen2.5:latest
+    apiBase: http://localhost:8080/v1
+    apiKey: ${{ secrets.ROUTER_API_KEY }}
+
+  - name: Agy (Antigravity)
+    provider: openai
+    model: agy
+    apiBase: http://localhost:8080/v1
+    apiKey: ${{ secrets.ROUTER_API_KEY }}
+
+  - name: Orchestrated (Multi-Agent)
+    provider: openai
+    model: orchestrated
+    apiBase: http://localhost:8080/v1
+    apiKey: ${{ secrets.ROUTER_API_KEY }}
+
+prompts:
+  - name: review
+    description: "Audit selected code for logic errors, security risks, and performance improvements"
+    prompt: "Please perform a rigorous review of this code. Identify potential bugs, structural improvements, security vulnerabilities, or memory leaks, and suggest clean refactored alternatives: {{{ input }}}"
+  - name: orchestrate
+    description: "Decompose a highly complex instruction into a multi-agent execution plan"
+    prompt: "You are the Orchestration Planner. Decompose this complex instruction into a clean parallel execution DAG of independent sub-tasks: {{{ input }}}"
+  - name: test
+    description: "Generate comprehensive unit tests covering standard behaviors and edge cases"
+    prompt: "Generate comprehensive Go unit tests for this code. Cover all primary execution paths, mock dependencies where appropriate, and include rigorous edge-case assertions: {{{ input }}}"
+  - name: profile
+    description: "Analyze latency scores and dynamic performance metrics of the gateway backends"
+    prompt: "Retrieve the health status, dynamic weights, and running latency profiles of all registered AI backends: {{{ input }}}"

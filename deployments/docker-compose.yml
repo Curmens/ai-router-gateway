@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  router:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    container_name: ai-router
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/airouter?sslmode=disable
+      - REDIS_HOST=redis:6379
+      - SERVER_PORT=8080
+    volumes:
+      - ../configs/config.yaml:/app/configs/config.yaml
+      - ~/.claude:/root/.claude:ro
+      - ~/.claude.json:/root/.claude.json:ro
+      - ~/.local/bin/agy:/usr/local/bin/agy:ro
+      - ~/.config/agy:/root/.config/agy:ro
+      - ~/.gemini:/root/.gemini
+      - ~/.antigravitycli:/root/.antigravitycli
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-router-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=airouter
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d airouter"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-router-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ai-router-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - router
+
+volumes:
+  pgdata:
+  redisdata:
