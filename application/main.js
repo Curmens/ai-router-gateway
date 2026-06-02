@@ -39,11 +39,11 @@ function createWindow() {
     frame: false, // Make window borderless / frameless like Discord
     titleBarStyle: 'hidden', // Native frameless window integration
     titleBarOverlay: {
-      color: '#1e1f22',
-      symbolColor: '#949ba4',
-      height: 22
+      color: '#000000',
+      symbolColor: '#666666',
+      height: 32
     },
-    backgroundColor: '#1e1f22', // Match dark frame background during load
+    backgroundColor: '#000000',
     title: 'Router Desktop Console',
     webPreferences: {
       nodeIntegration: true,

@@ -7,6 +7,15 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          three: ['three', '@react-three/fiber', '@react-three/drei'],
+          motion: ['framer-motion', 'gsap'],
+        }
+      }
+    }
   },
   server: {
     port: 5173,

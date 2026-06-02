@@ -64,6 +64,14 @@ func (s *APIServer) Start() error {
 		v1.GET("/usage/logs", s.handleUsageLogs)
 		v1.GET("/logs", s.handleRequestLogs)
 		v1.GET("/orchestration/:requestID", s.handleOrchestrationStatus)
+
+		admin := v1.Group("/admin")
+		admin.Use(s.adminOnlyMiddleware())
+		{
+			admin.GET("/providers", s.handleAdminGetProviders)
+			admin.PUT("/providers/:name", s.handleAdminUpdateProvider)
+			admin.POST("/providers/:name/test", s.handleAdminTestProvider)
+		}
 	}
 
 	addr := fmt.Sprintf(":%d", s.cfg.Server.Port)
@@ -413,6 +421,153 @@ func (s *APIServer) handleHealth(c *gin.Context) {
 
 func (s *APIServer) handleMetrics(c *gin.Context) {
 	telemetry.HTTPHandler().ServeHTTP(c.Writer, c.Request)
+}
+
+func (s *APIServer) adminOnlyMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetString("role") != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "admin role required"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func (s *APIServer) handleAdminGetProviders(c *gin.Context) {
+	mask := func(k string) string {
+		if len(k) <= 8 {
+			return "****"
+		}
+		return k[:4] + strings.Repeat("*", len(k)-8) + k[len(k)-4:]
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"providers": []gin.H{
+			{
+				"name":        "subscription",
+				"type":        "cli",
+				"enabled":     s.cfg.Providers.Subscription.Enabled,
+				"binary_path": s.cfg.Providers.Subscription.BinaryPath,
+				"models":      s.cfg.Providers.Subscription.Models,
+			},
+			{
+				"name":        "agy",
+				"type":        "cli",
+				"enabled":     s.cfg.Providers.Agy.Enabled,
+				"binary_path": s.cfg.Providers.Agy.BinaryPath,
+				"models":      s.cfg.Providers.Agy.Models,
+			},
+			{
+				"name":    "gemini",
+				"type":    "api_key",
+				"enabled": s.cfg.Providers.Gemini.Enabled,
+				"api_key": mask(s.cfg.Providers.Gemini.APIKey),
+				"models":  s.cfg.Providers.Gemini.Models,
+			},
+			{
+				"name":    "openai",
+				"type":    "api_key",
+				"enabled": s.cfg.Providers.OpenAI.Enabled,
+				"api_key": mask(s.cfg.Providers.OpenAI.APIKey),
+				"models":  s.cfg.Providers.OpenAI.Models,
+			},
+			{
+				"name":     "ollama",
+				"type":     "local",
+				"enabled":  s.cfg.Providers.Ollama.Enabled,
+				"base_url": s.cfg.Providers.Ollama.BaseURL,
+				"models":   s.cfg.Providers.Ollama.Models,
+			},
+		},
+	})
+}
+
+type providerUpdateRequest struct {
+	Enabled    *bool  `json:"enabled"`
+	APIKey     string `json:"api_key"`
+	BaseURL    string `json:"base_url"`
+	BinaryPath string `json:"binary_path"`
+}
+
+func (s *APIServer) handleAdminUpdateProvider(c *gin.Context) {
+	name := c.Param("name")
+	var req providerUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	switch name {
+	case "gemini":
+		if req.APIKey != "" {
+			s.cfg.Providers.Gemini.APIKey = req.APIKey
+		}
+		if req.Enabled != nil {
+			s.cfg.Providers.Gemini.Enabled = *req.Enabled
+		}
+	case "openai":
+		if req.APIKey != "" {
+			s.cfg.Providers.OpenAI.APIKey = req.APIKey
+		}
+		if req.Enabled != nil {
+			s.cfg.Providers.OpenAI.Enabled = *req.Enabled
+		}
+	case "ollama":
+		if req.BaseURL != "" {
+			s.cfg.Providers.Ollama.BaseURL = req.BaseURL
+		}
+		if req.Enabled != nil {
+			s.cfg.Providers.Ollama.Enabled = *req.Enabled
+		}
+	case "subscription":
+		if req.BinaryPath != "" {
+			s.cfg.Providers.Subscription.BinaryPath = req.BinaryPath
+		}
+		if req.Enabled != nil {
+			s.cfg.Providers.Subscription.Enabled = *req.Enabled
+		}
+	case "agy":
+		if req.BinaryPath != "" {
+			s.cfg.Providers.Agy.BinaryPath = req.BinaryPath
+		}
+		if req.Enabled != nil {
+			s.cfg.Providers.Agy.Enabled = *req.Enabled
+		}
+	default:
+		c.JSON(http.StatusNotFound, gin.H{"error": "unknown provider: " + name})
+		return
+	}
+
+	provider.InitProviders(s.cfg)
+	c.JSON(http.StatusOK, gin.H{"status": "updated", "provider": name})
+}
+
+func (s *APIServer) handleAdminTestProvider(c *gin.Context) {
+	name := c.Param("name")
+	prov, err := provider.GetProvider(name)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"ok": false, "error": "provider not registered: " + name})
+		return
+	}
+
+	ctx := c.Request.Context()
+	resp, err := prov.Chat(ctx, provider.ChatRequest{
+		Model: "auto",
+		Messages: []provider.ChatMessage{
+			{Role: "user", Content: "Reply with exactly: OK"},
+		},
+	})
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"ok": false, "error": err.Error()})
+		return
+	}
+
+	content := ""
+	if len(resp.Choices) > 0 {
+		content = resp.Choices[0].Message.Content
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "response": content})
 }
 
 func (s *APIServer) handleOrchestrationStatus(c *gin.Context) {

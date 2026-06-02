@@ -1,22 +1,30 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Terminal, Cpu, Settings as SettingsIcon,
-  Activity, RefreshCw, ShieldCheck, Hash, Search, Bell,
-  HelpCircle, Pin
+  RefreshCw, Search, Bell, HelpCircle, Activity
 } from 'lucide-react';
+import Preloader from './components/Preloader';
 import Dashboard from './components/Dashboard';
 import LogsExplorer from './components/LogsExplorer';
-import RouterCanvas from './components/RouterCanvas';
+import RouterView from './components/RouterView';
 import Settings from './components/Settings';
 
 const TABS = [
-  { id: 'dashboard', label: 'overview',      icon: LayoutDashboard, desc: 'Real-time gateway telemetry and provider health' },
-  { id: 'canvas',    label: 'router-path',   icon: Cpu,             desc: 'Live routing flow visualization and decision inspector' },
-  { id: 'explorer',  label: 'logs-explorer',  icon: Terminal,        desc: 'Query and inspect request audit traces' },
-  { id: 'settings',  label: 'settings',       icon: SettingsIcon,    desc: 'Gateway connection and dashboard configuration' },
+  { id: 'dashboard', label: 'Overview',      icon: LayoutDashboard, desc: 'Real-time gateway telemetry and provider health' },
+  { id: 'canvas',    label: 'Router Flow',   icon: Cpu,             desc: 'Live 3D routing flow visualization' },
+  { id: 'explorer',  label: 'Logs',          icon: Terminal,        desc: 'Query and inspect request audit traces' },
+  { id: 'settings',  label: 'Settings',      icon: SettingsIcon,    desc: 'Gateway connection and provider configuration' },
 ];
 
+const pageVariants = {
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.3, ease: [0.4, 0, 0.2, 1] } },
+  exit:    { opacity: 0, y: -8, transition: { duration: 0.15 } }
+};
+
 export default function App() {
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isOnline, setIsOnline] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
@@ -89,8 +97,8 @@ export default function App() {
           const d = await logsRes.json();
           if (d.logs?.length > 0) {
             const logs = d.logs;
-            const sumLatency = logs.reduce((a, l) => a + (l.latency_ms || 0), 0);
-            const errCount = logs.filter(l => l.status !== 200).length;
+            const sumLatency = logs.reduce((a, l) => a + (l.LatencyMs || 0), 0);
+            const errCount = logs.filter(l => l.Status !== 200).length;
             setGatewayStats(prev => ({
               ...prev,
               avgLatency: Math.round(sumLatency / logs.length),
@@ -99,7 +107,7 @@ export default function App() {
             }));
           }
         }
-      } catch {
+      } catch (e) {
         setIsOnline(false);
         if (settings.enableDemoMode) loadMockTelemetry();
       } finally {
@@ -144,105 +152,109 @@ export default function App() {
 
   const currentTab = TABS.find(t => t.id === activeTab);
 
+  if (loading) {
+    return <Preloader onComplete={() => setLoading(false)} />;
+  }
+
   return (
     <div className="app-shell">
-
-      {/* ── Custom Titlebar ── */}
+      {/* Titlebar */}
       <div className="titlebar">
-        <span>ROUTER DESKTOP</span>
+        <span>AI ROUTER</span>
       </div>
 
-      {/* ── 2-Column Body ── */}
       <div className="app-body">
-
         {/* ── Sidebar ── */}
         <div className="sidebar">
           <div className="sidebar-header">
-            <Activity size={18} style={{ color: 'var(--dc-brand-500)' }} />
-            <span className="server-name">AI Router</span>
+            <Activity size={20} style={{ color: 'var(--accent)' }} />
+            <span className="sidebar-brand">
+              AI <span className="sidebar-accent">Router</span>
+            </span>
           </div>
 
           <nav className="channel-list">
             <div className="channel-category">Monitoring</div>
-            {TABS.slice(0, 3).map(tab => (
-              <button
-                key={tab.id}
-                className={`channel-item ${activeTab === tab.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span className="hash">#</span>
-                {tab.label}
-              </button>
-            ))}
+            {TABS.slice(0, 3).map(tab => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  className={`channel-item ${activeTab === tab.id ? 'active' : ''}`}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  <Icon size={16} className="channel-icon" />
+                  {tab.label}
+                </button>
+              );
+            })}
 
             <div className="channel-category">System</div>
-            {TABS.slice(3).map(tab => (
-              <button
-                key={tab.id}
-                className={`channel-item ${activeTab === tab.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span className="hash">#</span>
-                {tab.label}
-              </button>
-            ))}
+            {TABS.slice(3).map(tab => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  className={`channel-item ${activeTab === tab.id ? 'active' : ''}`}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  <Icon size={16} className="channel-icon" />
+                  {tab.label}
+                </button>
+              );
+            })}
           </nav>
 
-          {/* ── User Panel ── */}
           <div className="user-panel">
-            <div className="user-avatar">
-              <div className="ring" style={{ background: 'var(--dc-brand-500)' }}>R</div>
-              <span className={`status-badge ${isOnline ? 'online' : 'offline'}`} />
+            <div className="user-avatar-ring">
+              R
+              <span className={`status-dot ${isOnline ? 'online' : 'offline'}`} />
             </div>
-            <div className="user-info">
-              <div className="username">{isOnline ? 'Gateway Online' : 'Offline Mode'}</div>
-              <div className="status-text">{settings.apiHost.replace('http://', '')}</div>
+            <div>
+              <div className="user-name">{isOnline ? 'Gateway Online' : 'Offline Mode'}</div>
+              <div className="user-sub">{settings.apiHost.replace('http://', '')}</div>
             </div>
           </div>
         </div>
 
         {/* ── Main Region ── */}
         <div className="main-region">
-
-          {/* Top Bar */}
           <div className="topbar">
             <div style={{ display: 'flex', alignItems: 'center' }}>
-              <div className="topbar-title">
-                <span className="hash-icon">#</span>
-                {currentTab?.label}
-              </div>
-              <div className="topbar-divider" />
+              <span className="topbar-title">{currentTab?.label}</span>
               <span className="topbar-desc">{currentTab?.desc}</span>
             </div>
-
             <div className="topbar-actions">
-              {isPolling && <RefreshCw size={14} className="dc-spin" style={{ color: 'var(--dc-brand-500)' }} />}
-              <button className="topbar-btn" title="Search">
-                <Search size={18} />
-              </button>
-              <button className="topbar-btn" title="Notifications">
-                <Bell size={18} />
-              </button>
-              <button className="topbar-btn" title="Help">
-                <HelpCircle size={18} />
-              </button>
+              {isPolling && <RefreshCw size={14} className="spin" style={{ color: 'var(--accent)' }} />}
+              <button className="topbar-btn"><Search size={16} /></button>
+              <button className="topbar-btn"><Bell size={16} /></button>
+              <button className="topbar-btn"><HelpCircle size={16} /></button>
             </div>
           </div>
 
-          {/* Content Scroll */}
           <div className="content-scroll">
-            {activeTab === 'dashboard' && (
-              <Dashboard stats={gatewayStats} providers={providers} models={models} isOnline={isOnline} />
-            )}
-            {activeTab === 'canvas' && (
-              <RouterCanvas providers={providers} models={models} apiHost={settings.apiHost} apiKey={settings.apiKey} isOnline={isOnline} />
-            )}
-            {activeTab === 'explorer' && (
-              <LogsExplorer apiHost={settings.apiHost} apiKey={settings.apiKey} isOnline={isOnline} />
-            )}
-            {activeTab === 'settings' && (
-              <Settings settings={settings} setSettings={setSettings} isOnline={isOnline} />
-            )}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeTab}
+                variants={pageVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+              >
+                {activeTab === 'dashboard' && (
+                  <Dashboard stats={gatewayStats} providers={providers} models={models} isOnline={isOnline} />
+                )}
+                {activeTab === 'canvas' && (
+                  <RouterView providers={providers} models={models} apiHost={settings.apiHost} apiKey={settings.apiKey} isOnline={isOnline} />
+                )}
+                {activeTab === 'explorer' && (
+                  <LogsExplorer apiHost={settings.apiHost} apiKey={settings.apiKey} isOnline={isOnline} />
+                )}
+                {activeTab === 'settings' && (
+                  <Settings settings={settings} setSettings={setSettings} isOnline={isOnline} />
+                )}
+              </motion.div>
+            </AnimatePresence>
           </div>
         </div>
       </div>
