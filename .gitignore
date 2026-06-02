@@ -1,0 +1,18 @@
+# Live config — contains real API keys, never commit
+configs/config.yaml
+
+# Claude Code local settings — contains allowed commands with keys
+.claude/settings.local.json
+
+# Build output
+bin/
+
+# Go
+*.test
+*.out
+
+# Environment files
+.env
+.env.*
+!.env.example
+bin/router
