@@ -30,9 +30,12 @@ func NewBlackboard(requestID string, originalPrompt string) *Blackboard {
 
 func LoadBlackboard(ctx context.Context, requestID string) (*Blackboard, error) {
 	key := "blackboard:" + requestID
-	data, err := cache.Client.Get(ctx, key).Bytes()
+	data, err := cache.GetBytes(ctx, key)
 	if err != nil {
 		return nil, err
+	}
+	if data == nil {
+		return nil, fmt.Errorf("blackboard not found for request %s", requestID)
 	}
 
 	var bb Blackboard
@@ -48,7 +51,7 @@ func (bb *Blackboard) Save(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return cache.Client.Set(ctx, key, data, 1*time.Hour).Err()
+	return cache.SetBytes(ctx, key, data, 1*time.Hour)
 }
 
 func (bb *Blackboard) SetDraft(ctx context.Context, taskID string, draft string) error {
