@@ -39,11 +39,11 @@ type CacheConfig struct {
 }
 
 type ProvidersConfig struct {
-	OpenAI       OpenAIConfig  `mapstructure:"openai"`
-	Gemini       GeminiConfig  `mapstructure:"gemini"`
-	Ollama       OllamaConfig  `mapstructure:"ollama"`
-	Subscription ClaudeConfig  `mapstructure:"subscription"`
-	Agy          AgyConfig     `mapstructure:"agy"`
+	OpenAI       OpenAIConfig `mapstructure:"openai"`
+	Gemini       GeminiConfig `mapstructure:"gemini"`
+	Ollama       OllamaConfig `mapstructure:"ollama"`
+	Subscription ClaudeConfig `mapstructure:"subscription"`
+	Agy          AgyConfig    `mapstructure:"agy"`
 }
 
 type AgyConfig struct {
@@ -59,17 +59,17 @@ type ClaudeConfig struct {
 }
 
 type OpenAIConfig struct {
-	Enabled   bool          `mapstructure:"enabled"`
-	APIKey    string        `mapstructure:"api_key"`
-	BaseURL   string        `mapstructure:"base_url"`
-	Models    []ModelConfig `mapstructure:"models"`
+	Enabled bool          `mapstructure:"enabled"`
+	APIKey  string        `mapstructure:"api_key"`
+	BaseURL string        `mapstructure:"base_url"`
+	Models  []ModelConfig `mapstructure:"models"`
 }
 
 type GeminiConfig struct {
-	Enabled   bool          `mapstructure:"enabled"`
-	APIKey    string        `mapstructure:"api_key"`
-	BaseURL   string        `mapstructure:"base_url"`
-	Models    []ModelConfig `mapstructure:"models"`
+	Enabled bool          `mapstructure:"enabled"`
+	APIKey  string        `mapstructure:"api_key"`
+	BaseURL string        `mapstructure:"base_url"`
+	Models  []ModelConfig `mapstructure:"models"`
 }
 
 type OllamaConfig struct {
