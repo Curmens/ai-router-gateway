@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/user1024/auto-router/internal/cache"
 	"github.com/user1024/auto-router/internal/config"
 	"github.com/user1024/auto-router/internal/logger"
@@ -64,11 +63,11 @@ func TestExecuteSubTaskRegistryRouting(t *testing.T) {
 	provider.Registry["agy"] = &MockProvider{name: "agy"}
 	provider.Registry["subscription"] = &MockProvider{name: "subscription"}
 
-	// Set up cache Client to a non-nil dummy to prevent nil pointer panics on SetDraft
-	cache.Client = redis.NewClient(&redis.Options{Addr: "localhost:16379"})
-
 	// Set up logger Log to a no-op logger to prevent SEGV nil pointer panic
 	logger.Log = zap.NewNop()
+
+	// Initialize the in-memory cache so blackboard SetDraft/Save work.
+	_ = cache.InitCache(&config.CacheConfig{CacheTTLSeconds: 60})
 
 	orch := NewOrchestrator(cfg)
 	bb := NewBlackboard("test-req-id", "mock original prompt")
