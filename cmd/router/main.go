@@ -42,12 +42,12 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := db.InitDB(ctx, &cfg.Database); err != nil {
-		logger.Log.Fatal("Failed to initialize database pool", zap.Error(err))
+	if err := db.InitDB(ctx, &cfg.Storage); err != nil {
+		logger.Log.Fatal("Failed to initialize storage", zap.Error(err))
 	}
 
-	if err := cache.InitRedis(&cfg.Redis); err != nil {
-		logger.Log.Fatal("Failed to initialize caching pool", zap.Error(err))
+	if err := cache.InitCache(&cfg.Cache); err != nil {
+		logger.Log.Fatal("Failed to initialize cache", zap.Error(err))
 	}
 
 	// Initialize Provider layers
