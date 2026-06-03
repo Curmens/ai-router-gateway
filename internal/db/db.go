@@ -2,76 +2,107 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user1024/auto-router/internal/config"
 	"github.com/user1024/auto-router/internal/logger"
 	"go.uber.org/zap"
+	_ "modernc.org/sqlite"
 )
 
-var Pool *pgxpool.Pool
+// DB is the process-wide SQLite handle. database/sql pools connections internally.
+var DB *sql.DB
+
+const dbFileName = "airouter.db"
 
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS requests (
     id TEXT PRIMARY KEY,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
-    prompt_tokens INT DEFAULT 0,
-    completion_tokens INT DEFAULT 0,
-    cost NUMERIC(10, 6) DEFAULT 0.000000,
-    latency_ms INT DEFAULT 0,
-    status INT DEFAULT 200,
+    prompt_tokens INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    cost REAL DEFAULT 0,
+    latency_ms INTEGER DEFAULT 0,
+    status INTEGER DEFAULT 200,
     error_message TEXT,
     prompt TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id TEXT NOT NULL,
     original_model TEXT NOT NULL,
     chosen_provider TEXT NOT NULL,
     chosen_model TEXT NOT NULL,
     routing_type TEXT NOT NULL,
     complexity TEXT,
-    confidence NUMERIC(4, 2),
+    confidence REAL,
     reason TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS budgets (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     api_key TEXT UNIQUE NOT NULL,
     role TEXT NOT NULL,
-    daily_limit NUMERIC(10, 2) NOT NULL,
-    daily_usage NUMERIC(10, 6) DEFAULT 0.000000,
-    monthly_limit NUMERIC(10, 2) NOT NULL,
-    monthly_usage NUMERIC(10, 6) DEFAULT 0.000000,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    daily_limit REAL NOT NULL,
+    daily_usage REAL DEFAULT 0,
+    monthly_limit REAL NOT NULL,
+    monthly_usage REAL DEFAULT 0,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 `
 
-func InitDB(ctx context.Context, cfg *config.DatabaseConfig) error {
-	pgxConfig, err := pgxpool.ParseConfig(cfg.URL)
+// resolveDataDir returns the directory that holds the SQLite file. An empty
+// configured path defaults to ~/.ai-router; a leading "~" is expanded to the
+// user's home directory.
+func resolveDataDir(path string) (string, error) {
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve home dir: %w", err)
+		}
+		return filepath.Join(home, ".ai-router"), nil
+	}
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve home dir: %w", err)
+		}
+		return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
+	}
+	return path, nil
+}
+
+func InitDB(ctx context.Context, cfg *config.StorageConfig) error {
+	dir, err := resolveDataDir(cfg.Path)
 	if err != nil {
-		return fmt.Errorf("failed to parse postgres config: %w", err)
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("failed to create data dir %q: %w", dir, err)
 	}
 
-	pgxConfig.MaxConns = int32(cfg.MaxConnections)
-	pgxConfig.MinConns = int32(cfg.MinConnections)
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)",
+		filepath.Join(dir, dbFileName))
 
-	pool, err := pgxpool.NewWithConfig(ctx, pgxConfig)
+	database, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return fmt.Errorf("failed to connect to postgres: %w", err)
+		return fmt.Errorf("failed to open sqlite database: %w", err)
 	}
 
-	if err := pool.Ping(ctx); err != nil {
-		return fmt.Errorf("failed to ping postgres: %w", err)
+	if err := database.PingContext(ctx); err != nil {
+		return fmt.Errorf("failed to ping sqlite database: %w", err)
 	}
 
-	Pool = pool
-	logger.Log.Info("Successfully connected to PostgreSQL")
+	DB = database
+	logger.Log.Info("Successfully opened SQLite database", zap.String("path", filepath.Join(dir, dbFileName)))
 
 	if err := runMigrations(ctx); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
@@ -81,18 +112,57 @@ func InitDB(ctx context.Context, cfg *config.DatabaseConfig) error {
 }
 
 func runMigrations(ctx context.Context) error {
-	_, err := Pool.Exec(ctx, schemaSQL)
-	if err != nil {
-		return fmt.Errorf("migration execution failed: %w", err)
+	for _, stmt := range strings.Split(schemaSQL, ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		if _, err := DB.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("migration execution failed: %w", err)
+		}
 	}
-	// Add prompt column if it doesn't exist (for existing databases)
-	_, err = Pool.Exec(ctx, "ALTER TABLE requests ADD COLUMN IF NOT EXISTS prompt TEXT;")
+
+	// Add prompt column if it doesn't exist (for databases created before it was added).
+	hasPrompt, err := columnExists(ctx, "requests", "prompt")
 	if err != nil {
-		logger.Log.Error("Failed to alter requests table to add prompt column", zap.Error(err))
+		logger.Log.Error("Failed to inspect requests table", zap.Error(err))
 		return err
 	}
-	logger.Log.Info("PostgreSQL migrations executed successfully")
+	if !hasPrompt {
+		if _, err := DB.ExecContext(ctx, "ALTER TABLE requests ADD COLUMN prompt TEXT"); err != nil {
+			logger.Log.Error("Failed to alter requests table to add prompt column", zap.Error(err))
+			return err
+		}
+	}
+
+	logger.Log.Info("SQLite migrations executed successfully")
 	return nil
+}
+
+func columnExists(ctx context.Context, table, column string) (bool, error) {
+	rows, err := DB.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			ctype      string
+			notNull    int
+			dfltValue  sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 type DBRequest struct {
@@ -111,9 +181,9 @@ type DBRequest struct {
 func SaveRequest(ctx context.Context, req DBRequest) error {
 	query := `
 		INSERT INTO requests (id, provider, model, prompt_tokens, completion_tokens, cost, latency_ms, status, error_message, prompt)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := Pool.Exec(ctx, query, req.ID, req.Provider, req.Model, req.PromptTokens, req.CompletionTokens, req.Cost, req.LatencyMs, req.Status, req.ErrorMessage, req.Prompt)
+	_, err := DB.ExecContext(ctx, query, req.ID, req.Provider, req.Model, req.PromptTokens, req.CompletionTokens, req.Cost, req.LatencyMs, req.Status, req.ErrorMessage, req.Prompt)
 	if err != nil {
 		logger.Log.Error("Failed to save request to DB", zap.Error(err), zap.String("request_id", req.ID))
 		return err
@@ -135,9 +205,9 @@ type DBAuditLog struct {
 func SaveAuditLog(ctx context.Context, log DBAuditLog) error {
 	query := `
 		INSERT INTO audit_logs (request_id, original_model, chosen_provider, chosen_model, routing_type, complexity, confidence, reason)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := Pool.Exec(ctx, query, log.RequestID, log.OriginalModel, log.ChosenProvider, log.ChosenModel, log.RoutingType, log.Complexity, log.Confidence, log.Reason)
+	_, err := DB.ExecContext(ctx, query, log.RequestID, log.OriginalModel, log.ChosenProvider, log.ChosenModel, log.RoutingType, log.Complexity, log.Confidence, log.Reason)
 	if err != nil {
 		logger.Log.Error("Failed to save audit log to DB", zap.Error(err), zap.String("request_id", log.RequestID))
 		return err
@@ -158,10 +228,10 @@ func GetBudget(ctx context.Context, apiKey string) (*DBBudget, error) {
 	query := `
 		SELECT api_key, role, daily_limit, daily_usage, monthly_limit, monthly_usage
 		FROM budgets
-		WHERE api_key = $1
+		WHERE api_key = ?
 	`
 	var b DBBudget
-	err := Pool.QueryRow(ctx, query, apiKey).Scan(&b.APIKey, &b.Role, &b.DailyLimit, &b.DailyUsage, &b.MonthlyLimit, &b.MonthlyUsage)
+	err := DB.QueryRowContext(ctx, query, apiKey).Scan(&b.APIKey, &b.Role, &b.DailyLimit, &b.DailyUsage, &b.MonthlyLimit, &b.MonthlyUsage)
 	if err != nil {
 		return nil, err
 	}
@@ -171,12 +241,12 @@ func GetBudget(ctx context.Context, apiKey string) (*DBBudget, error) {
 func UpdateBudgetUsage(ctx context.Context, apiKey string, cost float64) error {
 	query := `
 		UPDATE budgets
-		SET daily_usage = daily_usage + $2,
-		    monthly_usage = monthly_usage + $2,
-		    updated_at = NOW()
-		WHERE api_key = $1
+		SET daily_usage = daily_usage + ?,
+		    monthly_usage = monthly_usage + ?,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE api_key = ?
 	`
-	_, err := Pool.Exec(ctx, query, apiKey, cost)
+	_, err := DB.ExecContext(ctx, query, cost, cost, apiKey)
 	if err != nil {
 		logger.Log.Error("Failed to update budget usage in DB", zap.Error(err), zap.String("api_key", apiKey))
 		return err
@@ -216,27 +286,29 @@ func GetUsageLogs(ctx context.Context, f UsageLogFilter) ([]UsageLogEntry, Usage
 		f.Limit = 50
 	}
 
-	args := []any{
-		nullableString(f.Provider),
-		nullableString(f.Model),
-		nullableString(f.From),
-		nullableString(f.To),
+	// Named params let a single value satisfy both the "IS NULL" guard and the
+	// equality/range check without listing it twice.
+	filterArgs := []any{
+		sql.Named("provider", nullableString(f.Provider)),
+		sql.Named("model", nullableString(f.Model)),
+		sql.Named("from", nullableString(f.From)),
+		sql.Named("to", nullableString(f.To)),
 	}
 
 	where := `
-		($1::text IS NULL OR provider = $1)
-		AND ($2::text IS NULL OR model = $2)
-		AND ($3::timestamp IS NULL OR created_at >= $3::timestamp)
-		AND ($4::timestamp IS NULL OR created_at <= $4::timestamp)
+		(@provider IS NULL OR provider = @provider)
+		AND (@model IS NULL OR model = @model)
+		AND (@from IS NULL OR created_at >= @from)
+		AND (@to IS NULL OR created_at <= @to)
 		AND status = 200`
 
-	rows, err := Pool.Query(ctx, fmt.Sprintf(`
+	listArgs := append(append([]any{}, filterArgs...), sql.Named("limit", f.Limit), sql.Named("offset", f.Offset))
+	rows, err := DB.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, provider, model, prompt_tokens, completion_tokens, cost, latency_ms, created_at
 		FROM requests
 		WHERE %s
 		ORDER BY created_at DESC
-		LIMIT $5 OFFSET $6`, where),
-		append(args, f.Limit, f.Offset)...)
+		LIMIT @limit OFFSET @offset`, where), listArgs...)
 	if err != nil {
 		return nil, UsageSummary{}, fmt.Errorf("failed to query usage logs: %w", err)
 	}
@@ -245,14 +317,8 @@ func GetUsageLogs(ctx context.Context, f UsageLogFilter) ([]UsageLogEntry, Usage
 	var entries []UsageLogEntry
 	for rows.Next() {
 		var e UsageLogEntry
-		var createdAt any
-		if err := rows.Scan(&e.ID, &e.Provider, &e.Model, &e.PromptTokens, &e.CompletionTokens, &e.Cost, &e.LatencyMs, &createdAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Provider, &e.Model, &e.PromptTokens, &e.CompletionTokens, &e.Cost, &e.LatencyMs, &e.CreatedAt); err != nil {
 			return nil, UsageSummary{}, fmt.Errorf("failed to scan usage log row: %w", err)
-		}
-		if t, ok := createdAt.(interface{ Format(string) string }); ok {
-			e.CreatedAt = t.Format("2006-01-02T15:04:05Z")
-		} else {
-			e.CreatedAt = fmt.Sprintf("%v", createdAt)
 		}
 		entries = append(entries, e)
 	}
@@ -261,11 +327,11 @@ func GetUsageLogs(ctx context.Context, f UsageLogFilter) ([]UsageLogEntry, Usage
 	}
 
 	var summary UsageSummary
-	err = Pool.QueryRow(ctx, fmt.Sprintf(`
+	err = DB.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0),
 		       COALESCE(SUM(cost),0), COUNT(*)
 		FROM requests
-		WHERE %s`, where), args...).
+		WHERE %s`, where), filterArgs...).
 		Scan(&summary.TotalPromptTokens, &summary.TotalCompletionTokens, &summary.TotalCost, &summary.RequestCount)
 	if err != nil {
 		return nil, UsageSummary{}, fmt.Errorf("failed to query usage summary: %w", err)
@@ -309,24 +375,25 @@ func GetRequestTraces(ctx context.Context, f TraceFilter) ([]RequestTrace, int64
 		f.Limit = 50
 	}
 
-	args := []any{
-		nullableString(f.Provider),
-		nullableString(f.RoutingType),
-		nullableString(f.Complexity),
-		nullableString(f.Status),
-		nullableString(f.From),
-		nullableString(f.To),
+	filterArgs := []any{
+		sql.Named("provider", nullableString(f.Provider)),
+		sql.Named("routing", nullableString(f.RoutingType)),
+		sql.Named("complexity", nullableString(f.Complexity)),
+		sql.Named("status", nullableString(f.Status)),
+		sql.Named("from", nullableString(f.From)),
+		sql.Named("to", nullableString(f.To)),
 	}
 
 	where := `
-		($1::text IS NULL OR a.chosen_provider = $1)
-		AND ($2::text IS NULL OR a.routing_type = $2)
-		AND ($3::text IS NULL OR a.complexity = $3)
-		AND ($4::text IS NULL OR r.status::text = $4)
-		AND ($5::timestamp IS NULL OR r.created_at >= $5::timestamp)
-		AND ($6::timestamp IS NULL OR r.created_at <= $6::timestamp)`
+		(@provider IS NULL OR a.chosen_provider = @provider)
+		AND (@routing IS NULL OR a.routing_type = @routing)
+		AND (@complexity IS NULL OR a.complexity = @complexity)
+		AND (@status IS NULL OR CAST(r.status AS TEXT) = @status)
+		AND (@from IS NULL OR r.created_at >= @from)
+		AND (@to IS NULL OR r.created_at <= @to)`
 
-	rows, err := Pool.Query(ctx, fmt.Sprintf(`
+	listArgs := append(append([]any{}, filterArgs...), sql.Named("limit", f.Limit), sql.Named("offset", f.Offset))
+	rows, err := DB.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			r.id,
 			COALESCE(a.original_model, r.model),
@@ -343,8 +410,7 @@ func GetRequestTraces(ctx context.Context, f TraceFilter) ([]RequestTrace, int64
 		LEFT JOIN audit_logs a ON a.request_id = r.id
 		WHERE %s
 		ORDER BY r.created_at DESC
-		LIMIT $7 OFFSET $8`, where),
-		append(args, f.Limit, f.Offset)...)
+		LIMIT @limit OFFSET @offset`, where), listArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query request traces: %w", err)
 	}
@@ -353,20 +419,14 @@ func GetRequestTraces(ctx context.Context, f TraceFilter) ([]RequestTrace, int64
 	var traces []RequestTrace
 	for rows.Next() {
 		var t RequestTrace
-		var createdAt any
 		if err := rows.Scan(
 			&t.RequestID, &t.OriginalModel, &t.ChosenProvider, &t.ChosenModel,
 			&t.RoutingType, &t.Complexity, &t.Confidence,
 			&t.Reason, &t.PromptTokens, &t.CompletionTokens,
 			&t.Cost, &t.LatencyMs, &t.Status, &t.ErrorMessage,
-			&createdAt, &t.Prompt,
+			&t.CreatedAt, &t.Prompt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan trace row: %w", err)
-		}
-		if tt, ok := createdAt.(interface{ Format(string) string }); ok {
-			t.CreatedAt = tt.Format("2006-01-02T15:04:05Z")
-		} else {
-			t.CreatedAt = fmt.Sprintf("%v", createdAt)
 		}
 		traces = append(traces, t)
 	}
@@ -375,11 +435,11 @@ func GetRequestTraces(ctx context.Context, f TraceFilter) ([]RequestTrace, int64
 	}
 
 	var total int64
-	err = Pool.QueryRow(ctx, fmt.Sprintf(`
+	err = DB.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT COUNT(*)
 		FROM requests r
 		LEFT JOIN audit_logs a ON a.request_id = r.id
-		WHERE %s`, where), args...).Scan(&total)
+		WHERE %s`, where), filterArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count traces: %w", err)
 	}
@@ -397,11 +457,11 @@ func nullableString(s string) any {
 func UpsertBudgetLimits(ctx context.Context, apiKey string, role string, daily float64, monthly float64) error {
 	query := `
 		INSERT INTO budgets (api_key, role, daily_limit, monthly_limit)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (api_key) 
-		DO UPDATE SET daily_limit = $3, monthly_limit = $4, role = $2, updated_at = NOW()
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(api_key)
+		DO UPDATE SET daily_limit = excluded.daily_limit, monthly_limit = excluded.monthly_limit, role = excluded.role, updated_at = CURRENT_TIMESTAMP
 	`
-	_, err := Pool.Exec(ctx, query, apiKey, role, daily, monthly)
+	_, err := DB.ExecContext(ctx, query, apiKey, role, daily, monthly)
 	if err != nil {
 		logger.Log.Error("Failed to upsert budget limits", zap.Error(err), zap.String("api_key", apiKey))
 		return err
