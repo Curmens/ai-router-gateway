@@ -11,16 +11,11 @@ server:
       role: "user"
       rate_limit: 10
 
-database:
-  url: "postgres://postgres:postgres@localhost:5432/airouter?sslmode=disable"
-  max_connections: 20
-  min_connections: 2
+storage:
+  path: "" # empty => ~/.ai-router (SQLite database file lives here)
 
-redis:
-  host: "localhost:6379"
-  password: ""
-  db: 0
-  cache_ttl_seconds: 3600
+cache:
+  cache_ttl_seconds: 3600 # in-memory response cache TTL
 
 providers:
   openai:
