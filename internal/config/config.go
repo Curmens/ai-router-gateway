@@ -10,8 +10,8 @@ import (
 
 type Config struct {
 	Server    ServerConfig    `mapstructure:"server"`
-	Database  DatabaseConfig  `mapstructure:"database"`
-	Redis     RedisConfig     `mapstructure:"redis"`
+	Storage   StorageConfig   `mapstructure:"storage"`
+	Cache     CacheConfig     `mapstructure:"cache"`
 	Providers ProvidersConfig `mapstructure:"providers"`
 	Routing   RoutingConfig   `mapstructure:"routing"`
 	Telemetry TelemetryConfig `mapstructure:"telemetry"`
@@ -28,17 +28,14 @@ type APIKeyConfig struct {
 	RateLimit int    `mapstructure:"rate_limit"`
 }
 
-type DatabaseConfig struct {
-	URL            string `mapstructure:"url"`
-	MaxConnections int    `mapstructure:"max_connections"`
-	MinConnections int    `mapstructure:"min_connections"`
+type StorageConfig struct {
+	// Path is the directory where the SQLite database file lives.
+	// Empty means the default: ~/.ai-router
+	Path string `mapstructure:"path"`
 }
 
-type RedisConfig struct {
-	Host             string `mapstructure:"host"`
-	Password         string `mapstructure:"password"`
-	DB               int    `mapstructure:"db"`
-	CacheTTLSeconds  int    `mapstructure:"cache_ttl_seconds"`
+type CacheConfig struct {
+	CacheTTLSeconds int `mapstructure:"cache_ttl_seconds"`
 }
 
 type ProvidersConfig struct {
