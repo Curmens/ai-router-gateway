@@ -6,34 +6,229 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/user1024/auto-router/internal/config"
 	"github.com/user1024/auto-router/internal/logger"
 	"go.uber.org/zap"
 )
 
-var Client *redis.Client
-var cacheTTL time.Duration
+// item is a single cache entry. It holds either a byte value (data) or an
+// ordered list (list), distinguished by isList. A zero expiresAt means the
+// entry never expires.
+type item struct {
+	data      []byte
+	list      [][]byte
+	expiresAt time.Time
+	isList    bool
+}
 
-func InitRedis(cfg *config.RedisConfig) error {
-	Client = redis.NewClient(&redis.Options{
-		Addr:     cfg.Host,
-		Password: cfg.Password,
-		DB:       cfg.DB,
-	})
+// memStore is a thread-safe in-memory key/value + list store with TTLs. The
+// single mutex makes read-modify-write operations (incr/incrByFloat) atomic,
+// replacing the atomicity Redis INCR/INCRBYFLOAT provided.
+type memStore struct {
+	mu sync.Mutex
+	m  map[string]*item
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+func newMemStore() *memStore {
+	return &memStore{m: make(map[string]*item)}
+}
 
-	if err := Client.Ping(ctx).Err(); err != nil {
-		return fmt.Errorf("failed to ping redis: %w", err)
+// liveLocked returns the entry for key if present and not expired, deleting it
+// lazily on expiry. Caller must hold the mutex.
+func (s *memStore) liveLocked(key string) (*item, bool) {
+	it, ok := s.m[key]
+	if !ok {
+		return nil, false
 	}
+	if !it.expiresAt.IsZero() && time.Now().After(it.expiresAt) {
+		delete(s.m, key)
+		return nil, false
+	}
+	return it, true
+}
 
+func (s *memStore) set(key string, data []byte, ttl time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it := &item{data: data}
+	if ttl > 0 {
+		it.expiresAt = time.Now().Add(ttl)
+	}
+	s.m[key] = it
+}
+
+func (s *memStore) get(key string) ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, ok := s.liveLocked(key)
+	if !ok || it.isList {
+		return nil, false
+	}
+	return it.data, true
+}
+
+func (s *memStore) incr(key string, ttl time.Duration) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int64
+	if it, ok := s.liveLocked(key); ok && !it.isList {
+		n, _ = strconv.ParseInt(string(it.data), 10, 64)
+	}
+	n++
+	it := &item{data: []byte(strconv.FormatInt(n, 10))}
+	if ttl > 0 {
+		it.expiresAt = time.Now().Add(ttl)
+	}
+	s.m[key] = it
+	return n
+}
+
+func (s *memStore) incrByFloat(key string, delta float64, ttl time.Duration) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var f float64
+	if it, ok := s.liveLocked(key); ok && !it.isList {
+		f, _ = strconv.ParseFloat(string(it.data), 64)
+	}
+	f += delta
+	it := &item{data: []byte(strconv.FormatFloat(f, 'f', -1, 64))}
+	if ttl > 0 {
+		it.expiresAt = time.Now().Add(ttl)
+	}
+	s.m[key] = it
+	return f
+}
+
+func (s *memStore) lpush(key string, val []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, ok := s.liveLocked(key)
+	if !ok || !it.isList {
+		it = &item{isList: true}
+		s.m[key] = it
+	}
+	it.list = append([][]byte{val}, it.list...)
+}
+
+func (s *memStore) rpush(key string, val []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, ok := s.liveLocked(key)
+	if !ok || !it.isList {
+		it = &item{isList: true}
+		s.m[key] = it
+	}
+	it.list = append(it.list, val)
+}
+
+func (s *memStore) ltrim(key string, start, stop int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, ok := s.liveLocked(key)
+	if !ok || !it.isList {
+		return
+	}
+	lo, hi, empty := normalizeRange(len(it.list), start, stop)
+	if empty {
+		it.list = nil
+		return
+	}
+	it.list = append([][]byte{}, it.list[lo:hi+1]...)
+}
+
+func (s *memStore) lrange(key string, start, stop int) [][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, ok := s.liveLocked(key)
+	if !ok || !it.isList {
+		return nil
+	}
+	lo, hi, empty := normalizeRange(len(it.list), start, stop)
+	if empty {
+		return nil
+	}
+	return append([][]byte{}, it.list[lo:hi+1]...)
+}
+
+func (s *memStore) expire(key string, ttl time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if it, ok := s.liveLocked(key); ok {
+		if ttl > 0 {
+			it.expiresAt = time.Now().Add(ttl)
+		} else {
+			it.expiresAt = time.Time{}
+		}
+	}
+}
+
+func (s *memStore) sweepExpired() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for k, it := range s.m {
+		if !it.expiresAt.IsZero() && now.After(it.expiresAt) {
+			delete(s.m, k)
+		}
+	}
+}
+
+// normalizeRange resolves Redis-style (possibly negative) indices into a
+// concrete [lo, hi] inclusive slice range. empty is true when the range
+// selects nothing.
+func normalizeRange(length, start, stop int) (lo int, hi int, empty bool) {
+	if length == 0 {
+		return 0, 0, true
+	}
+	if start < 0 {
+		start = length + start
+		if start < 0 {
+			start = 0
+		}
+	}
+	if stop < 0 {
+		stop = length + stop
+	}
+	if stop >= length {
+		stop = length - 1
+	}
+	if start > stop || start >= length {
+		return 0, 0, true
+	}
+	return start, stop, false
+}
+
+var (
+	store       *memStore
+	cacheTTL    time.Duration
+	sweeperOnce sync.Once
+)
+
+// InitCache builds the in-memory store and starts a background sweeper that
+// drops expired keys. It never fails, but keeps an error return for a stable
+// initialization signature.
+func InitCache(cfg *config.CacheConfig) error {
+	store = newMemStore()
 	cacheTTL = time.Duration(cfg.CacheTTLSeconds) * time.Second
-	logger.Log.Info("Successfully connected to Redis", zap.String("host", cfg.Host))
+	sweeperOnce.Do(func() {
+		go sweepLoop(60 * time.Second)
+	})
+	logger.Log.Info("Initialized in-memory cache", zap.Int("cache_ttl_seconds", cfg.CacheTTLSeconds))
 	return nil
+}
+
+func sweepLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if store != nil {
+			store.sweepExpired()
+		}
+	}
 }
 
 func GenerateCacheKey(prompt string, model string, stream bool) string {
@@ -43,24 +238,49 @@ func GenerateCacheKey(prompt string, model string, stream bool) string {
 }
 
 func GetResponseCache(ctx context.Context, key string) ([]byte, error) {
-	val, err := Client.Get(ctx, key).Bytes()
-	if err != nil {
-		if err == redis.Nil {
-			return nil, nil
-		}
-		logger.Log.Error("Redis cache get failure", zap.Error(err), zap.String("key", key))
-		return nil, err
+	if v, ok := store.get(key); ok {
+		return v, nil
 	}
-	return val, nil
+	return nil, nil
 }
 
 func SetResponseCache(ctx context.Context, key string, data []byte) error {
-	err := Client.Set(ctx, key, data, cacheTTL).Err()
-	if err != nil {
-		logger.Log.Error("Redis cache set failure", zap.Error(err), zap.String("key", key))
-		return err
+	store.set(key, data, cacheTTL)
+	return nil
+}
+
+// SetBytes stores an arbitrary value with a caller-supplied TTL (0 = no expiry).
+func SetBytes(ctx context.Context, key string, data []byte, ttl time.Duration) error {
+	store.set(key, data, ttl)
+	return nil
+}
+
+// GetBytes returns the value for key, or (nil, nil) on a miss.
+func GetBytes(ctx context.Context, key string) ([]byte, error) {
+	if v, ok := store.get(key); ok {
+		return v, nil
+	}
+	return nil, nil
+}
+
+// ListPush prepends value to the list at key and trims it to maxLen items
+// (newest first), mirroring the old Redis LPUSH + LTRIM pattern.
+func ListPush(ctx context.Context, key string, value []byte, maxLen int) error {
+	store.lpush(key, value)
+	if maxLen > 0 {
+		store.ltrim(key, 0, maxLen-1)
 	}
 	return nil
+}
+
+// ListRange returns the list slice [start, stop] (Redis-style indices) as strings.
+func ListRange(ctx context.Context, key string, start, stop int) ([]string, error) {
+	vals := store.lrange(key, start, stop)
+	out := make([]string, len(vals))
+	for i, v := range vals {
+		out[i] = string(v)
+	}
+	return out, nil
 }
 
 type Message struct {
@@ -74,30 +294,22 @@ func SaveSessionMessage(ctx context.Context, sessionID string, msg Message) erro
 	if err != nil {
 		return err
 	}
-	pipe := Client.Pipeline()
-	pipe.RPush(ctx, key, data)
-	pipe.Expire(ctx, key, 24*time.Hour)
-	_, err = pipe.Exec(ctx)
-	if err != nil {
-		logger.Log.Error("Failed to save session message", zap.Error(err), zap.String("session_id", sessionID))
-	}
-	return err
+	store.rpush(key, data)
+	store.expire(key, 24*time.Hour)
+	return nil
 }
 
 func GetSessionHistory(ctx context.Context, sessionID string) ([]Message, error) {
 	key := "session:" + sessionID
-	vals, err := Client.LRange(ctx, key, 0, -1).Result()
-	if err != nil {
-		if err == redis.Nil {
-			return nil, nil
-		}
-		return nil, err
+	vals := store.lrange(key, 0, -1)
+	if len(vals) == 0 {
+		return nil, nil
 	}
 
 	messages := make([]Message, len(vals))
 	for i, val := range vals {
 		var msg Message
-		if err := json.Unmarshal([]byte(val), &msg); err != nil {
+		if err := json.Unmarshal(val, &msg); err != nil {
 			return nil, err
 		}
 		messages[i] = msg
@@ -114,15 +326,7 @@ func RateLimitCheck(ctx context.Context, apiKey string, limit int) (bool, int, e
 	minuteStr := now.Format("2006-01-02 15:04")
 	key := fmt.Sprintf("ratelimit:%s:%s", apiKey, minuteStr)
 
-	pipe := Client.Pipeline()
-	incr := pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, 2*time.Minute)
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		return false, 0, err
-	}
-
-	count := int(incr.Val())
+	count := int(store.incr(key, 2*time.Minute))
 	if count > limit {
 		return false, 0, nil
 	}
@@ -135,17 +339,9 @@ func TrackBudgetUsage(ctx context.Context, apiKey string, cost float64) (float64
 	dailyKey := fmt.Sprintf("budget:daily:%s:%s", apiKey, now.Format("2006-01-02"))
 	monthlyKey := fmt.Sprintf("budget:monthly:%s:%s", apiKey, now.Format("2006-01"))
 
-	pipe := Client.Pipeline()
-	dailyInc := pipe.IncrByFloat(ctx, dailyKey, cost)
-	pipe.Expire(ctx, dailyKey, 25*time.Hour)
-	monthlyInc := pipe.IncrByFloat(ctx, monthlyKey, cost)
-	pipe.Expire(ctx, monthlyKey, 32*24*time.Hour)
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	return dailyInc.Val(), monthlyInc.Val(), nil
+	daily := store.incrByFloat(dailyKey, cost, 25*time.Hour)
+	monthly := store.incrByFloat(monthlyKey, cost, 32*24*time.Hour)
+	return daily, monthly, nil
 }
 
 func GetCachedBudgetUsage(ctx context.Context, apiKey string) (float64, float64, error) {
@@ -153,22 +349,18 @@ func GetCachedBudgetUsage(ctx context.Context, apiKey string) (float64, float64,
 	dailyKey := fmt.Sprintf("budget:daily:%s:%s", apiKey, now.Format("2006-01-02"))
 	monthlyKey := fmt.Sprintf("budget:monthly:%s:%s", apiKey, now.Format("2006-01"))
 
-	pipe := Client.Pipeline()
-	dailyVal := pipe.Get(ctx, dailyKey)
-	monthlyVal := pipe.Get(ctx, monthlyKey)
-	_, err := pipe.Exec(ctx)
-	if err != nil && err != redis.Nil {
-		return 0, 0, err
+	return getFloat(dailyKey), getFloat(monthlyKey), nil
+}
+
+func getFloat(key string) float64 {
+	if v, ok := store.get(key); ok {
+		f, _ := strconv.ParseFloat(string(v), 64)
+		return f
 	}
-
-	dCost, _ := dailyVal.Float64()
-	mCost, _ := monthlyVal.Float64()
-
-	return dCost, mCost, nil
+	return 0
 }
 
 func SetProviderStatus(ctx context.Context, provider string, isHealthy bool, latencyMs int64) error {
-	pipe := Client.Pipeline()
 	statusKey := "health:status:" + provider
 	latencyKey := "health:latency:" + provider
 
@@ -177,36 +369,30 @@ func SetProviderStatus(ctx context.Context, provider string, isHealthy bool, lat
 		status = "unhealthy"
 	}
 
-	pipe.Set(ctx, statusKey, status, 24*time.Hour)
-	pipe.LPush(ctx, latencyKey, latencyMs)
-	pipe.LTrim(ctx, latencyKey, 0, 99)
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		logger.Log.Error("Failed to update provider status in Redis", zap.Error(err), zap.String("provider", provider))
-	}
-	return err
+	store.set(statusKey, []byte(status), 24*time.Hour)
+	store.lpush(latencyKey, []byte(strconv.FormatInt(latencyMs, 10)))
+	store.ltrim(latencyKey, 0, 99)
+	return nil
 }
 
 func GetProviderHealth(ctx context.Context, provider string) (bool, int64, error) {
 	statusKey := "health:status:" + provider
 	latencyKey := "health:latency:" + provider
 
-	status, err := Client.Get(ctx, statusKey).Result()
-	if err != nil && err != redis.Nil {
-		return false, 0, err
+	isHealthy := true
+	if v, ok := store.get(statusKey); ok && string(v) == "unhealthy" {
+		isHealthy = false
 	}
 
-	isHealthy := status != "unhealthy"
-
-	latencies, err := Client.LRange(ctx, latencyKey, 0, 9).Result()
+	latencies := store.lrange(latencyKey, 0, 9)
 	var avgLatency int64 = 0
-	if err == nil && len(latencies) > 0 {
+	if len(latencies) > 0 {
 		var sum int64 = 0
 		var validCount int64 = 0
-		for _, lStr := range latencies {
-			var l int64
-			if _, err := fmt.Sscanf(lStr, "%d", &l); err == nil {
-				sum += l
+		for _, l := range latencies {
+			var v int64
+			if _, err := fmt.Sscanf(string(l), "%d", &v); err == nil {
+				sum += v
 				validCount++
 			}
 		}
