@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/user1024/auto-router/internal/cache"
 	"github.com/user1024/auto-router/internal/config"
 	"github.com/user1024/auto-router/internal/db"
+	"github.com/user1024/auto-router/internal/graph"
 	"github.com/user1024/auto-router/internal/health"
 	"github.com/user1024/auto-router/internal/logger"
 	"github.com/user1024/auto-router/internal/provider"
@@ -43,12 +45,10 @@ func main() {
 	defer cancel()
 
 	if err := db.InitDB(ctx, &cfg.Database); err != nil {
-		logger.Log.Fatal("Failed to initialize database pool", zap.Error(err))
+		logger.Log.Fatal("Failed to initialize database", zap.Error(err))
 	}
 
-	if err := cache.InitRedis(&cfg.Redis); err != nil {
-		logger.Log.Fatal("Failed to initialize caching pool", zap.Error(err))
-	}
+	cache.Init()
 
 	// Initialize Provider layers
 	provider.InitProviders(cfg)
@@ -63,6 +63,17 @@ func main() {
 	monitor := health.NewMonitor()
 	monitor.Start(30 * time.Second)
 	defer monitor.Stop()
+
+	// Initialize Graph Project Resolver
+	defaultPath := "/home/user1024/Projects/auto-router"
+	if cfg.Routing.GraphPath != "" {
+		// Use parent of graphify-out/graph.json if custom GraphPath set
+		defaultPath = filepath.Dir(filepath.Dir(cfg.Routing.GraphPath))
+	}
+	graph.InitResolver(defaultPath)
+	if err := graph.ActiveResolver.ScanProjects("/home/user1024/Projects"); err != nil {
+		logger.Log.Warn("Failed to scan project directories", zap.Error(err))
+	}
 
 	orch := agent.NewOrchestrator(cfg)
 

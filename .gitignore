@@ -1,13 +1,24 @@
 # Live config — contains real API keys, never commit
 configs/config.yaml
+configs/litellm-config.yaml
 
 # Claude Code local settings — contains allowed commands with keys
 .claude/
 
 # Go build output
 bin/
+auto-router
 *.test
 *.out
+
+# Database files
+*.db
+
+# Python virtual environment
+.venv/
+
+# Generated output
+graphify-out/
 
 # Node / Electron
 application/node_modules/

@@ -3,90 +3,61 @@ package router
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 
 	"github.com/user1024/auto-router/internal/cache"
-	"github.com/user1024/auto-router/internal/logger"
-	"go.uber.org/zap"
 )
 
 func LogCallMetrics(ctx context.Context, provider string, latencyMs int64, hasError bool, responseText string, isJSONRequested bool) {
-	pipe := cache.Client.Pipeline()
+	cache.PushMetric("health:latency:"+provider, float64(latencyMs))
 
-	latencyKey := "health:latency:" + provider
-	pipe.LPush(ctx, latencyKey, latencyMs)
-	pipe.LTrim(ctx, latencyKey, 0, 19)
-
-	errorKey := "profiling:errors:" + provider
-	errVal := 0
+	errVal := 0.0
 	if hasError {
-		errVal = 1
+		errVal = 1.0
 	}
-	pipe.LPush(ctx, errorKey, errVal)
-	pipe.LTrim(ctx, errorKey, 0, 19)
+	cache.PushMetric("profiling:errors:"+provider, errVal)
 
 	if isJSONRequested && !hasError {
-		syntaxKey := "profiling:syntax:" + provider
-		var isValid interface{}
-		isJSONValid := json.Unmarshal([]byte(responseText), &isValid) == nil
-
+		var v interface{}
 		syntaxVal := 1.0
-		if !isJSONValid {
+		if json.Unmarshal([]byte(responseText), &v) != nil {
 			syntaxVal = 0.0
 		}
-		pipe.LPush(ctx, syntaxKey, syntaxVal)
-		pipe.LTrim(ctx, syntaxKey, 0, 19)
-	}
-
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		logger.Log.Error("Failed to save profiling metrics to Redis", zap.Error(err), zap.String("provider", provider))
+		cache.PushMetric("profiling:syntax:"+provider, syntaxVal)
 	}
 }
 
 func GetProviderPerformanceScore(ctx context.Context, provider string) float64 {
-	latencyKey := "health:latency:" + provider
-	errorKey := "profiling:errors:" + provider
-	syntaxKey := "profiling:syntax:" + provider
-
-	latencies, err := cache.Client.LRange(ctx, latencyKey, 0, 19).Result()
-	var avgLatency float64 = 500.0
-	if err == nil && len(latencies) > 0 {
-		var sum float64 = 0
-		for _, lStr := range latencies {
-			if l, err := strconv.ParseFloat(lStr, 64); err == nil {
-				sum += l
-			}
+	latencies := cache.GetMetrics("health:latency:" + provider)
+	avgLatency := 500.0
+	if len(latencies) > 0 {
+		var sum float64
+		for _, l := range latencies {
+			sum += l
 		}
 		avgLatency = sum / float64(len(latencies))
 	}
 
-	errorsList, err := cache.Client.LRange(ctx, errorKey, 0, 19).Result()
-	var errorRate float64 = 0.0
-	if err == nil && len(errorsList) > 0 {
-		var errSum float64 = 0
-		for _, eStr := range errorsList {
-			if e, err := strconv.ParseFloat(eStr, 64); err == nil {
-				errSum += e
-			}
+	errors := cache.GetMetrics("profiling:errors:" + provider)
+	var errorRate float64
+	if len(errors) > 0 {
+		var sum float64
+		for _, e := range errors {
+			sum += e
 		}
-		errorRate = errSum / float64(len(errorsList))
+		errorRate = sum / float64(len(errors))
 	}
 
-	syntaxList, err := cache.Client.LRange(ctx, syntaxKey, 0, 19).Result()
-	var avgSyntax float64 = 1.0
-	if err == nil && len(syntaxList) > 0 {
-		var synSum float64 = 0
-		for _, sStr := range syntaxList {
-			if s, err := strconv.ParseFloat(sStr, 64); err == nil {
-				synSum += s
-			}
+	syntax := cache.GetMetrics("profiling:syntax:" + provider)
+	avgSyntax := 1.0
+	if len(syntax) > 0 {
+		var sum float64
+		for _, s := range syntax {
+			sum += s
 		}
-		avgSyntax = synSum / float64(len(syntaxList))
+		avgSyntax = sum / float64(len(syntax))
 	}
 
 	latencyScore := 1.0 / (1.0 + (avgLatency / 1000.0))
 	successScore := 1.0 - errorRate
-
 	return (0.4 * latencyScore) + (0.3 * successScore) + (0.3 * avgSyntax)
 }

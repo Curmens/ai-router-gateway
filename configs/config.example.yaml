@@ -12,15 +12,7 @@ server:
       rate_limit: 10
 
 database:
-  url: "postgres://postgres:postgres@localhost:5432/airouter?sslmode=disable"
-  max_connections: 20
-  min_connections: 2
-
-redis:
-  host: "localhost:6379"
-  password: ""
-  db: 0
-  cache_ttl_seconds: 3600
+  path: "router.db" # SQLite file path; defaults to router.db in the working directory
 
 providers:
   openai:

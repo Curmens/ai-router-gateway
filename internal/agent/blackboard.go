@@ -30,7 +30,7 @@ func NewBlackboard(requestID string, originalPrompt string) *Blackboard {
 
 func LoadBlackboard(ctx context.Context, requestID string) (*Blackboard, error) {
 	key := "blackboard:" + requestID
-	data, err := cache.Client.Get(ctx, key).Bytes()
+	data, err := cache.LoadBlob(ctx, key)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func (bb *Blackboard) Save(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return cache.Client.Set(ctx, key, data, 1*time.Hour).Err()
+	return cache.StoreBlob(ctx, key, data, time.Hour)
 }
 
 func (bb *Blackboard) SetDraft(ctx context.Context, taskID string, draft string) error {

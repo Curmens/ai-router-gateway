@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Terminal, Cpu, Settings as SettingsIcon,
-  RefreshCw, Search, Bell, HelpCircle, Activity, MessageSquare
+  RefreshCw, Search, Bell, HelpCircle, Activity, MessageSquare, Network
 } from 'lucide-react';
 import Preloader from './components/Preloader';
 import Dashboard from './components/Dashboard';
@@ -10,11 +10,13 @@ import LogsExplorer from './components/LogsExplorer';
 import RouterView from './components/RouterView';
 import Settings from './components/Settings';
 import Playground from './components/Playground';
+import CodeGraph from './components/CodeGraph';
 
 const TABS = [
   { id: 'dashboard', label: 'Overview',      icon: LayoutDashboard, desc: 'Real-time gateway telemetry and provider health' },
   { id: 'chat',      label: 'Playground',    icon: MessageSquare,   desc: 'Interactive chat client routed through gateway' },
   { id: 'canvas',    label: 'Router Flow',   icon: Cpu,             desc: 'Live 3D routing flow visualization' },
+  { id: 'graph',     label: 'Code Graph',    icon: Network,         desc: 'Interactive codebase dependency map' },
   { id: 'explorer',  label: 'Logs',          icon: Terminal,        desc: 'Query and inspect request audit traces' },
   { id: 'settings',  label: 'Settings',      icon: SettingsIcon,    desc: 'Gateway connection and provider configuration' },
 ];
@@ -251,6 +253,9 @@ export default function App() {
                 )}
                 {activeTab === 'canvas' && (
                   <RouterView providers={providers} models={models} apiHost={settings.apiHost} apiKey={settings.apiKey} isOnline={isOnline} />
+                )}
+                {activeTab === 'graph' && (
+                  <CodeGraph apiHost={settings.apiHost} apiKey={settings.apiKey} isOnline={isOnline} />
                 )}
                 {activeTab === 'explorer' && (
                   <LogsExplorer apiHost={settings.apiHost} apiKey={settings.apiKey} isOnline={isOnline} />

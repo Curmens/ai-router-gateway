@@ -17,6 +17,8 @@ type ChatRequest struct {
 	TopP        *float64      `json:"top_p,omitempty"`
 	MaxTokens   *int          `json:"max_tokens,omitempty"`
 	Stream      bool          `json:"stream,omitempty"`
+	ProjectPath string        `json:"project_path,omitempty"`
+	ProjectID   string        `json:"project_id,omitempty"`
 }
 
 type ChatChoice struct {

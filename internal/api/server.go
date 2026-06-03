@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,9 +20,12 @@ import (
 	"github.com/user1024/auto-router/internal/db"
 	"github.com/user1024/auto-router/internal/logger"
 	"github.com/user1024/auto-router/internal/provider"
+	"github.com/user1024/auto-router/internal/graph"
 	"github.com/user1024/auto-router/internal/router"
 	"github.com/user1024/auto-router/internal/telemetry"
+	"github.com/user1024/auto-router/internal/ui"
 	"go.uber.org/zap"
+	"os/exec"
 )
 
 type APIServer struct {
@@ -64,6 +70,9 @@ func (s *APIServer) Start() error {
 		v1.GET("/usage/logs", s.handleUsageLogs)
 		v1.GET("/logs", s.handleRequestLogs)
 		v1.GET("/orchestration/:requestID", s.handleOrchestrationStatus)
+		v1.GET("/projects", s.handleProjectsList)
+		v1.GET("/graph", s.handleGetGraph)
+		v1.POST("/graph/refresh", s.handleRefreshGraph)
 
 		admin := v1.Group("/admin")
 		admin.Use(s.adminOnlyMiddleware())
@@ -73,6 +82,8 @@ func (s *APIServer) Start() error {
 			admin.POST("/providers/:name/test", s.handleAdminTestProvider)
 		}
 	}
+
+	s.registerFrontend(r)
 
 	addr := fmt.Sprintf(":%d", s.cfg.Server.Port)
 	logger.Log.Info("API Gateway starting HTTP server", zap.String("addr", addr))
@@ -177,13 +188,26 @@ func (s *APIServer) handleChatCompletions(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
-	logger.Log.Info("Received chat completions request", zap.String("id", reqID), zap.String("model", req.Model), zap.Bool("stream", req.Stream))
-
 	promptContent := ""
 	if len(req.Messages) > 0 {
 		promptContent = req.Messages[len(req.Messages)-1].Content
 	}
+
+	// Resolve project path automatically
+	projectPath := c.GetHeader("X-Project-Path")
+	if projectPath == "" {
+		projectPath = req.ProjectPath
+	}
+	if projectPath == "" && graph.ActiveResolver != nil {
+		projectPath, _ = graph.ActiveResolver.Resolve(promptContent)
+	}
+
+	ctx := c.Request.Context()
+	if projectPath != "" {
+		ctx = graph.WithProjectPath(ctx, projectPath)
+	}
+
+	logger.Log.Info("Received chat completions request", zap.String("id", reqID), zap.String("model", req.Model), zap.Bool("stream", req.Stream), zap.String("project_path", projectPath))
 
 	if req.Model == "orchestrated" {
 		start := time.Now()
@@ -676,5 +700,118 @@ func (s *APIServer) handleUsageLogs(c *gin.Context) {
 		"logs":   entries,
 		"limit":  limit,
 		"offset": offset,
+	})
+}
+
+func (s *APIServer) registerFrontend(r *gin.Engine) {
+	distFS, err := fs.Sub(ui.FS, "dist")
+	if err != nil {
+		logger.Log.Warn("Frontend not available (run 'npm run build' in application/)")
+		return
+	}
+
+	serveFile := func(c *gin.Context, path string) bool {
+		data, err := distFS.Open(path)
+		if err != nil {
+			return false
+		}
+		defer data.Close()
+		stat, err := data.Stat()
+		if err != nil || stat.IsDir() {
+			return false
+		}
+		raw := make([]byte, stat.Size())
+		if _, err := io.ReadFull(data, raw); err != nil {
+			return false
+		}
+		ct := mime.TypeByExtension(filepath.Ext(path))
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		c.Data(http.StatusOK, ct, raw)
+		return true
+	}
+
+	serveIndex := func(c *gin.Context) {
+		data, err := ui.FS.ReadFile("dist/index.html")
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+	}
+
+	r.GET("/", serveIndex)
+	r.NoRoute(func(c *gin.Context) {
+		path := strings.TrimPrefix(c.Request.URL.Path, "/")
+		if !serveFile(c, path) {
+			serveIndex(c)
+		}
+	})
+}
+
+func (s *APIServer) handleProjectsList(c *gin.Context) {
+	if graph.ActiveResolver == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	c.JSON(http.StatusOK, graph.ActiveResolver.GetScannedProjects())
+}
+
+func (s *APIServer) handleGetGraph(c *gin.Context) {
+	projectPath := c.Query("project_path")
+	if projectPath == "" && graph.ActiveResolver != nil {
+		projectPath = graph.ActiveResolver.DefaultPath
+	}
+
+	if projectPath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project_path query parameter is required"})
+		return
+	}
+
+	graphFile := filepath.Join(projectPath, "graphify-out", "graph.json")
+	g, err := graph.LoadGraph(graphFile)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("failed to load graph: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, g)
+}
+
+func (s *APIServer) handleRefreshGraph(c *gin.Context) {
+	projectPath := c.Query("project_path")
+	if projectPath == "" && graph.ActiveResolver != nil {
+		projectPath = graph.ActiveResolver.DefaultPath
+	}
+
+	if projectPath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project_path is required"})
+		return
+	}
+
+	binary := "graphify"
+	if _, err := exec.LookPath(binary); err != nil {
+		binary = "/home/user1024/.local/bin/graphify"
+	}
+
+	cmd := exec.CommandContext(c.Request.Context(), binary, "update", projectPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  err.Error(),
+			"output": string(output),
+		})
+		return
+	}
+
+	// Rescan projects to update resolver memory cache
+	if graph.ActiveResolver != nil {
+		_ = graph.ActiveResolver.ScanProjects("/home/user1024/Projects")
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "refreshed",
+		"output": string(output),
 	})
 }

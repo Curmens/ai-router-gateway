@@ -7,6 +7,10 @@ import (
 
 var Log *zap.Logger
 
+func init() {
+	Log = zap.NewNop()
+}
+
 func InitLogger(env string) {
 	var config zap.Config
 	if env == "production" {

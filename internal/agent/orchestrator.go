@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/user1024/auto-router/internal/config"
+	"github.com/user1024/auto-router/internal/graph"
 	"github.com/user1024/auto-router/internal/logger"
 	"github.com/user1024/auto-router/internal/provider"
 	"github.com/user1024/auto-router/internal/router"
@@ -71,11 +73,36 @@ Respond ONLY with a raw JSON array matching this schema (do not wrap in markdown
   }
 ]`
 
+	// Retrieve graph context from context project path
+	graphPath := ""
+	if projPath := graph.GetProjectPath(ctx); projPath != "" {
+		graphPath = filepath.Join(projPath, "graphify-out", "graph.json")
+	} else if o.cfg.Routing.GraphPath != "" {
+		graphPath = o.cfg.Routing.GraphPath
+	} else {
+		graphPath = "graphify-out/graph.json"
+	}
+
+	var graphContext string
+	if g, err := graph.LoadGraph(graphPath); err == nil {
+		graphContext = g.QueryContext(requestPrompt)
+		if graphContext != "" {
+			logger.Log.Info("Injected graphify codebase context into orchestrator planner", zap.String("path", graphPath))
+		}
+	} else {
+		logger.Log.Debug("Codebase graph not found or failed to load, skipping graph context injection", zap.Error(err))
+	}
+
+	userPrompt := fmt.Sprintf("Decompose this request:\n\n%s", requestPrompt)
+	if graphContext != "" {
+		userPrompt = fmt.Sprintf("Decompose this request:\n\n%s\n\n%s", requestPrompt, graphContext)
+	}
+
 	req := provider.ChatRequest{
 		Model: modelName,
 		Messages: []provider.ChatMessage{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: fmt.Sprintf("Decompose this request:\n\n%s", requestPrompt)},
+			{Role: "user", Content: userPrompt},
 		},
 	}
 

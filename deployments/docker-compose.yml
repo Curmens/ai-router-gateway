@@ -68,6 +68,21 @@ services:
     depends_on:
       - router
 
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: ai-router-litellm
+    ports:
+      - "4000:4000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ../configs:/app/configs
+    command: [ "--config", "/app/configs/litellm-config.yaml", "--port", "4000" ]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
 volumes:
   pgdata:
   redisdata:

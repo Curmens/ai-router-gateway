@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   base: './',
   build: {
-    outDir: 'dist',
+    outDir: '../internal/ui/dist',
     emptyOutDir: true,
     chunkSizeWarningLimit: 600,
     rollupOptions: {

@@ -11,7 +11,6 @@ import (
 type Config struct {
 	Server    ServerConfig    `mapstructure:"server"`
 	Database  DatabaseConfig  `mapstructure:"database"`
-	Redis     RedisConfig     `mapstructure:"redis"`
 	Providers ProvidersConfig `mapstructure:"providers"`
 	Routing   RoutingConfig   `mapstructure:"routing"`
 	Telemetry TelemetryConfig `mapstructure:"telemetry"`
@@ -29,24 +28,22 @@ type APIKeyConfig struct {
 }
 
 type DatabaseConfig struct {
-	URL            string `mapstructure:"url"`
-	MaxConnections int    `mapstructure:"max_connections"`
-	MinConnections int    `mapstructure:"min_connections"`
-}
-
-type RedisConfig struct {
-	Host             string `mapstructure:"host"`
-	Password         string `mapstructure:"password"`
-	DB               int    `mapstructure:"db"`
-	CacheTTLSeconds  int    `mapstructure:"cache_ttl_seconds"`
+	Path string `mapstructure:"path"`
 }
 
 type ProvidersConfig struct {
-	OpenAI       OpenAIConfig  `mapstructure:"openai"`
-	Gemini       GeminiConfig  `mapstructure:"gemini"`
-	Ollama       OllamaConfig  `mapstructure:"ollama"`
-	Subscription ClaudeConfig  `mapstructure:"subscription"`
-	Agy          AgyConfig     `mapstructure:"agy"`
+	OpenAI       OpenAIConfig `mapstructure:"openai"`
+	Gemini       GeminiConfig `mapstructure:"gemini"`
+	Ollama       OllamaConfig `mapstructure:"ollama"`
+	Subscription ClaudeConfig `mapstructure:"subscription"`
+	Agy          AgyConfig    `mapstructure:"agy"`
+}
+
+type LiteLLMConfig struct {
+	Enabled   bool          `mapstructure:"enabled"`
+	APIKey    string        `mapstructure:"api_key"`
+	BaseURL   string        `mapstructure:"base_url"`
+	Models    []ModelConfig `mapstructure:"models"`
 }
 
 type AgyConfig struct {
@@ -92,6 +89,7 @@ type RoutingConfig struct {
 	DefaultModel string         `mapstructure:"default_model"`
 	AutoRouting  AutoRouting    `mapstructure:"auto_routing"`
 	Failover     FailoverConfig `mapstructure:"failover"`
+	GraphPath    string         `mapstructure:"graph_path"`
 }
 
 type AutoRouting struct {

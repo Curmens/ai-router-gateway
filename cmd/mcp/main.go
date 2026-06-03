@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/user1024/auto-router/internal/config"
+	"github.com/user1024/auto-router/internal/graph"
 )
 
 // JSON-RPC 2.0 standard structs
@@ -203,6 +205,46 @@ func handleRequest(req JSONRPCRequest, port int, apiKey string) {
 							"description": "Number of traces to pull (default is 5, max is 50)",
 						},
 					},
+				},
+			},
+			{
+				Name:        "query_codebase_graph",
+				Description: "Search the codebase knowledge graph (nodes, labels, types, files, descriptions, and edges) using query keywords.",
+				InputSchema: Schema{
+					Type: "object",
+					Properties: map[string]any{
+						"query": map[string]any{
+							"type":        "string",
+							"description": "Query string or keywords to match against file names, symbols, descriptions, or file paths",
+						},
+					},
+					Required: []string{"query"},
+				},
+			},
+			{
+				Name:        "find_impact_path",
+				Description: "Perform pathfinding in the codebase knowledge graph from a source node to a target node to check dependency impact flows.",
+				InputSchema: Schema{
+					Type: "object",
+					Properties: map[string]any{
+						"start": map[string]any{
+							"type":        "string",
+							"description": "The unique ID/label of the source node (e.g., cmd_router_main)",
+						},
+						"end": map[string]any{
+							"type":        "string",
+							"description": "The unique ID/label of the target node (e.g., internal_db_db)",
+						},
+					},
+					Required: []string{"start", "end"},
+				},
+			},
+			{
+				Name:        "refresh_codebase_graph",
+				Description: "Trigger an incremental re-extraction of codebase AST structures and rebuild the local graph.json files.",
+				InputSchema: Schema{
+					Type:       "object",
+					Properties: make(map[string]any),
 				},
 			},
 		}
@@ -437,6 +479,83 @@ func callTool(name string, argsRaw json.RawMessage, port int, apiKey string) (st
 			))
 		}
 		return sb.String(), false
+
+	case "query_codebase_graph":
+		var args struct {
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal(argsRaw, &args); err != nil {
+			return fmt.Sprintf("Failed to parse arguments: %v", err), true
+		}
+		if args.Query == "" {
+			return "Argument 'query' is required.", true
+		}
+
+		graphPath := "graphify-out/graph.json"
+		if config.ActiveConfig != nil && config.ActiveConfig.Routing.GraphPath != "" {
+			graphPath = config.ActiveConfig.Routing.GraphPath
+		}
+
+		g, err := graph.LoadGraph(graphPath)
+		if err != nil {
+			return fmt.Sprintf("Failed to load codebase graph: %v. Please ensure graphify has run on this codebase.", err), true
+		}
+
+		ctxText := g.QueryContext(args.Query)
+		if ctxText == "" {
+			return fmt.Sprintf("No relevant nodes found in codebase graph matching query: %s", args.Query), false
+		}
+		return ctxText, false
+
+	case "find_impact_path":
+		var args struct {
+			Start string `json:"start"`
+			End   string `json:"end"`
+		}
+		if err := json.Unmarshal(argsRaw, &args); err != nil {
+			return fmt.Sprintf("Failed to parse arguments: %v", err), true
+		}
+		if args.Start == "" || args.End == "" {
+			return "Arguments 'start' and 'end' are required.", true
+		}
+
+		graphPath := "graphify-out/graph.json"
+		if config.ActiveConfig != nil && config.ActiveConfig.Routing.GraphPath != "" {
+			graphPath = config.ActiveConfig.Routing.GraphPath
+		}
+
+		g, err := graph.LoadGraph(graphPath)
+		if err != nil {
+			return fmt.Sprintf("Failed to load codebase graph: %v. Please ensure graphify has run on this codebase.", err), true
+		}
+
+		path, err := g.FindImpactPath(args.Start, args.End)
+		if err != nil {
+			return fmt.Sprintf("Could not trace path: %v", err), false
+		}
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("### 🔍 Codebase Impact Flow Path from %s to %s:\n\n", args.Start, args.End))
+		for i, p := range path {
+			if i > 0 {
+				sb.WriteString(" ➔ ")
+			}
+			sb.WriteString(fmt.Sprintf("`%s`", p))
+		}
+		return sb.String(), false
+
+	case "refresh_codebase_graph":
+		fmt.Fprintln(os.Stderr, "Triggering codebase graph refresh...")
+		binary := "graphify"
+		if _, err := exec.LookPath(binary); err != nil {
+			binary = "/home/user1024/.local/bin/graphify"
+		}
+		cmd := exec.Command(binary, "update", "/home/user1024/Projects/auto-router")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Sprintf("Failed to refresh codebase graph: %v. Output:\n%s", err, string(output)), true
+		}
+		return fmt.Sprintf("Successfully refreshed codebase graph!\n\n%s", string(output)), false
 
 	default:
 		return "Unknown tool name: " + name, true
