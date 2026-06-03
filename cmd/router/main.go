@@ -67,8 +67,13 @@ func main() {
 	// Initialize Graph Project Resolver
 	defaultPath := "/home/user1024/Projects/auto-router"
 	if cfg.Routing.GraphPath != "" {
-		// Use parent of graphify-out/graph.json if custom GraphPath set
-		defaultPath = filepath.Dir(filepath.Dir(cfg.Routing.GraphPath))
+		// Convert to absolute path first to ensure grandparent directory resolution is absolute
+		absGraphPath, err := filepath.Abs(cfg.Routing.GraphPath)
+		if err == nil {
+			defaultPath = filepath.Dir(filepath.Dir(absGraphPath))
+		} else {
+			defaultPath = filepath.Dir(filepath.Dir(cfg.Routing.GraphPath))
+		}
 	}
 	graph.InitResolver(defaultPath)
 	if err := graph.ActiveResolver.ScanProjects("/home/user1024/Projects"); err != nil {

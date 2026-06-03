@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/fsnotify/fsnotify"
@@ -148,6 +149,7 @@ func LoadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	expandEnvVars(&cfg)
 	ActiveConfig = &cfg
 
 	viper.OnConfigChange(func(e fsnotify.Event) {
@@ -159,4 +161,17 @@ func LoadConfig(configPath string) (*Config, error) {
 	viper.WatchConfig()
 
 	return &cfg, nil
+}
+
+// expandEnvVars resolves ${VAR} placeholders inside config strings.
+// Viper's AutomaticEnv only maps env var names to config keys; it does
+// NOT expand shell-style variable references embedded in YAML values.
+func expandEnvVars(cfg *Config) {
+	cfg.Providers.Gemini.APIKey = os.ExpandEnv(cfg.Providers.Gemini.APIKey)
+	cfg.Providers.Gemini.BaseURL = os.ExpandEnv(cfg.Providers.Gemini.BaseURL)
+	cfg.Providers.OpenAI.APIKey = os.ExpandEnv(cfg.Providers.OpenAI.APIKey)
+	cfg.Providers.OpenAI.BaseURL = os.ExpandEnv(cfg.Providers.OpenAI.BaseURL)
+	cfg.Providers.Ollama.BaseURL = os.ExpandEnv(cfg.Providers.Ollama.BaseURL)
+	cfg.Providers.Agy.BinaryPath = os.ExpandEnv(cfg.Providers.Agy.BinaryPath)
+	cfg.Providers.Subscription.BinaryPath = os.ExpandEnv(cfg.Providers.Subscription.BinaryPath)
 }

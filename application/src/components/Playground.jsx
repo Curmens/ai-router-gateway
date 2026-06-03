@@ -402,10 +402,16 @@ export default function Playground({ apiHost, apiKey, isOnline, models }) {
         }, 800);
 
       } catch (err) {
+        let errorDetail = err.message;
+        if (err.message.includes('HTTP 500')) {
+          errorDetail = `All providers in the failover chain failed. Check that at least one provider (Ollama, Claude, Gemini) is running and configured correctly in Settings.`;
+        } else if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+          errorDetail = `Cannot reach the API gateway at \`${apiHost}\`. Make sure the auto-router backend is running.`;
+        }
         setMessages(prev => prev.map(m => 
           m.id === botMessageId ? { 
             ...m, 
-            content: `⚠️ **Connection Error:** Failed to stream from API server.\n\nError: ${err.message}` 
+            content: `⚠️ **Request Failed**\n\n${errorDetail}\n\n_Tip: Check the **Settings** tab to verify provider endpoints and API keys._`
           } : m
         ));
       } finally {
