@@ -6,41 +6,31 @@ import (
 	"strconv"
 
 	"github.com/user1024/auto-router/internal/cache"
-	"github.com/user1024/auto-router/internal/logger"
-	"go.uber.org/zap"
 )
 
-func LogCallMetrics(ctx context.Context, provider string, latencyMs int64, hasError bool, responseText string, isJSONRequested bool) {
-	pipe := cache.Client.Pipeline()
+const profilingMaxLen = 20
 
+func LogCallMetrics(ctx context.Context, provider string, latencyMs int64, hasError bool, responseText string, isJSONRequested bool) {
 	latencyKey := "health:latency:" + provider
-	pipe.LPush(ctx, latencyKey, latencyMs)
-	pipe.LTrim(ctx, latencyKey, 0, 19)
+	_ = cache.ListPush(ctx, latencyKey, []byte(strconv.FormatInt(latencyMs, 10)), profilingMaxLen)
 
 	errorKey := "profiling:errors:" + provider
-	errVal := 0
+	errVal := "0"
 	if hasError {
-		errVal = 1
+		errVal = "1"
 	}
-	pipe.LPush(ctx, errorKey, errVal)
-	pipe.LTrim(ctx, errorKey, 0, 19)
+	_ = cache.ListPush(ctx, errorKey, []byte(errVal), profilingMaxLen)
 
 	if isJSONRequested && !hasError {
 		syntaxKey := "profiling:syntax:" + provider
 		var isValid interface{}
 		isJSONValid := json.Unmarshal([]byte(responseText), &isValid) == nil
 
-		syntaxVal := 1.0
+		syntaxVal := "1"
 		if !isJSONValid {
-			syntaxVal = 0.0
+			syntaxVal = "0"
 		}
-		pipe.LPush(ctx, syntaxKey, syntaxVal)
-		pipe.LTrim(ctx, syntaxKey, 0, 19)
-	}
-
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		logger.Log.Error("Failed to save profiling metrics to Redis", zap.Error(err), zap.String("provider", provider))
+		_ = cache.ListPush(ctx, syntaxKey, []byte(syntaxVal), profilingMaxLen)
 	}
 }
 
@@ -49,7 +39,7 @@ func GetProviderPerformanceScore(ctx context.Context, provider string) float64 {
 	errorKey := "profiling:errors:" + provider
 	syntaxKey := "profiling:syntax:" + provider
 
-	latencies, err := cache.Client.LRange(ctx, latencyKey, 0, 19).Result()
+	latencies, err := cache.ListRange(ctx, latencyKey, 0, 19)
 	var avgLatency float64 = 500.0
 	if err == nil && len(latencies) > 0 {
 		var sum float64 = 0
@@ -61,7 +51,7 @@ func GetProviderPerformanceScore(ctx context.Context, provider string) float64 {
 		avgLatency = sum / float64(len(latencies))
 	}
 
-	errorsList, err := cache.Client.LRange(ctx, errorKey, 0, 19).Result()
+	errorsList, err := cache.ListRange(ctx, errorKey, 0, 19)
 	var errorRate float64 = 0.0
 	if err == nil && len(errorsList) > 0 {
 		var errSum float64 = 0
@@ -73,7 +63,7 @@ func GetProviderPerformanceScore(ctx context.Context, provider string) float64 {
 		errorRate = errSum / float64(len(errorsList))
 	}
 
-	syntaxList, err := cache.Client.LRange(ctx, syntaxKey, 0, 19).Result()
+	syntaxList, err := cache.ListRange(ctx, syntaxKey, 0, 19)
 	var avgSyntax float64 = 1.0
 	if err == nil && len(syntaxList) > 0 {
 		var synSum float64 = 0
