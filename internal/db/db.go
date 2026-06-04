@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	_ "modernc.org/sqlite"
 	"github.com/user1024/auto-router/internal/config"
 	"github.com/user1024/auto-router/internal/logger"
 	"go.uber.org/zap"
+	_ "modernc.org/sqlite"
 )
 
 var DB *sql.DB
@@ -70,6 +70,11 @@ func runMigrations(ctx context.Context) error {
 			daily_usage REAL DEFAULT 0.0,
 			monthly_limit REAL NOT NULL,
 			monthly_usage REAL DEFAULT 0.0,
+			updated_at TEXT DEFAULT (datetime('now'))
+		)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
 			updated_at TEXT DEFAULT (datetime('now'))
 		)`,
 	}
@@ -387,6 +392,34 @@ func UpsertBudgetLimits(ctx context.Context, apiKey, role string, daily, monthly
 	)
 	if err != nil {
 		logger.Log.Error("Failed to upsert budget limits", zap.Error(err), zap.String("api_key", apiKey))
+	}
+	return err
+}
+
+// GetSetting returns the value for key; found is false when no row exists.
+func GetSetting(ctx context.Context, key string) (string, bool, error) {
+	var value string
+	err := DB.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return value, true, nil
+}
+
+func SetSetting(ctx context.Context, key, value string) error {
+	_, err := DB.ExecContext(ctx, `
+		INSERT INTO settings (key, value, updated_at)
+		VALUES (?, ?, datetime('now'))
+		ON CONFLICT(key) DO UPDATE SET
+			value = excluded.value,
+			updated_at = datetime('now')`,
+		key, value,
+	)
+	if err != nil {
+		logger.Log.Error("Failed to upsert setting", zap.Error(err), zap.String("key", key))
 	}
 	return err
 }
