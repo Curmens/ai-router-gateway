@@ -85,7 +85,7 @@ func TestProjectResolver(t *testing.T) {
 
 func TestContextHelpers(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Test empty path retrieval
 	if path := GetProjectPath(ctx); path != "" {
 		t.Errorf("expected empty path from empty context, got: %s", path)
