@@ -70,9 +70,9 @@ func (g *CodebaseGraph) QueryNodes(query string) []GraphNode {
 			if len(w) < 3 {
 				continue
 			}
-			if strings.Contains(idLower, w) || 
-				strings.Contains(descLower, w) || 
-				strings.Contains(labelLower, w) || 
+			if strings.Contains(idLower, w) ||
+				strings.Contains(descLower, w) ||
+				strings.Contains(labelLower, w) ||
 				strings.Contains(sourceLower, w) {
 				matchCount++
 			}
