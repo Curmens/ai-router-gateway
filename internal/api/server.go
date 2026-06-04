@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,10 +19,11 @@ import (
 	"github.com/user1024/auto-router/internal/cache"
 	"github.com/user1024/auto-router/internal/config"
 	"github.com/user1024/auto-router/internal/db"
+	"github.com/user1024/auto-router/internal/graph"
 	"github.com/user1024/auto-router/internal/logger"
 	"github.com/user1024/auto-router/internal/provider"
-	"github.com/user1024/auto-router/internal/graph"
 	"github.com/user1024/auto-router/internal/router"
+	"github.com/user1024/auto-router/internal/settings"
 	"github.com/user1024/auto-router/internal/telemetry"
 	"github.com/user1024/auto-router/internal/ui"
 	"go.uber.org/zap"
@@ -33,6 +35,7 @@ type APIServer struct {
 	failover     *router.FailoverManager
 	engine       *router.RoutingEngine
 	orchestrator *agent.Orchestrator
+	cfgMu        sync.RWMutex // guards reads/writes of cfg.Providers across requests
 }
 
 func NewAPIServer(cfg *config.Config, fm *router.FailoverManager, re *router.RoutingEngine, orch *agent.Orchestrator) *APIServer {
@@ -473,6 +476,9 @@ func (s *APIServer) handleAdminGetProviders(c *gin.Context) {
 		return k[:4] + strings.Repeat("*", len(k)-8) + k[len(k)-4:]
 	}
 
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+
 	c.JSON(http.StatusOK, gin.H{
 		"providers": []gin.H{
 			{
@@ -529,6 +535,11 @@ func (s *APIServer) handleAdminUpdateProvider(c *gin.Context) {
 		return
 	}
 
+	// Serialize the mutate + persist + refresh so concurrent admin updates
+	// (and reads in handleAdminGetProviders) don't race or lose writes.
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+
 	switch name {
 	case "gemini":
 		if req.APIKey != "" {
@@ -570,7 +581,17 @@ func (s *APIServer) handleAdminUpdateProvider(c *gin.Context) {
 		return
 	}
 
+	// Persist to the filedb so the change survives restarts.
+	if err := settings.SaveProviders(c.Request.Context(), s.cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist settings: " + err.Error()})
+		return
+	}
+
+	// Refresh everything derived from provider config, not just the registry.
 	provider.InitProviders(s.cfg)
+	router.InitRegistry(s.cfg)
+	router.InitCircuitBreakers(s.cfg)
+
 	c.JSON(http.StatusOK, gin.H{"status": "updated", "provider": name})
 }
 
@@ -582,9 +603,19 @@ func (s *APIServer) handleAdminTestProvider(c *gin.Context) {
 		return
 	}
 
+	// Test with a concrete model from the provider's config; "auto" is a routing
+	// keyword, not a real model, so sending it straight to the provider 404s.
+	s.cfgMu.RLock()
+	model := s.firstModelForProvider(name)
+	s.cfgMu.RUnlock()
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "no model configured for provider: " + name})
+		return
+	}
+
 	ctx := c.Request.Context()
 	resp, err := prov.Chat(ctx, provider.ChatRequest{
-		Model: "auto",
+		Model: model,
 		Messages: []provider.ChatMessage{
 			{Role: "user", Content: "Reply with exactly: OK"},
 		},
@@ -598,7 +629,29 @@ func (s *APIServer) handleAdminTestProvider(c *gin.Context) {
 	if len(resp.Choices) > 0 {
 		content = resp.Choices[0].Message.Content
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "response": content})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "model": model, "response": content})
+}
+
+// firstModelForProvider returns the first configured model name for a provider,
+// or "" if the provider is unknown or has no models configured.
+func (s *APIServer) firstModelForProvider(name string) string {
+	var models []config.ModelConfig
+	switch name {
+	case "openai":
+		models = s.cfg.Providers.OpenAI.Models
+	case "gemini":
+		models = s.cfg.Providers.Gemini.Models
+	case "ollama":
+		models = s.cfg.Providers.Ollama.Models
+	case "subscription":
+		models = s.cfg.Providers.Subscription.Models
+	case "agy":
+		models = s.cfg.Providers.Agy.Models
+	}
+	if len(models) > 0 {
+		return models[0].Name
+	}
+	return ""
 }
 
 func (s *APIServer) handleOrchestrationStatus(c *gin.Context) {

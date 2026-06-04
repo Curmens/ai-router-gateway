@@ -13,6 +13,7 @@ import (
 )
 
 type contextKey string
+
 const ProjectPathKey contextKey = "project_path"
 
 func WithProjectPath(ctx context.Context, path string) context.Context {
@@ -55,7 +56,7 @@ func (pr *ProjectResolver) ScanProjects(rootPath string) error {
 	defer pr.mu.Unlock()
 
 	logger.Log.Info("Scanning projects root path for graphify codebases", zap.String("root", rootPath))
-	
+
 	// Ensure rootPath is absolute
 	absRoot, err := filepath.Abs(rootPath)
 	if err != nil {
@@ -145,7 +146,7 @@ func (pr *ProjectResolver) Resolve(prompt string) (string, *CodebaseGraph) {
 	}
 
 	words := strings.Fields(strings.ToLower(prompt))
-	
+
 	// Count occurrences of matching symbols per project
 	counts := make(map[string]int)
 	for _, w := range words {

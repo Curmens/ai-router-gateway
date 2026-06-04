@@ -19,6 +19,7 @@ import (
 	"github.com/user1024/auto-router/internal/logger"
 	"github.com/user1024/auto-router/internal/provider"
 	"github.com/user1024/auto-router/internal/router"
+	"github.com/user1024/auto-router/internal/settings"
 	"github.com/user1024/auto-router/internal/telemetry"
 	"go.uber.org/zap"
 )
@@ -49,6 +50,11 @@ func main() {
 	}
 
 	cache.Init()
+
+	// Overlay settings persisted in the filedb before providers init from cfg.
+	if err := settings.Load(ctx, cfg); err != nil {
+		logger.Log.Warn("Failed to load persisted settings; using YAML config", zap.Error(err))
+	}
 
 	// Initialize Provider layers
 	provider.InitProviders(cfg)

@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
-	"os/exec"
 
 	"github.com/user1024/auto-router/internal/config"
 )

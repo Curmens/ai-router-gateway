@@ -335,7 +335,7 @@ func callTool(name string, argsRaw json.RawMessage, port int, apiKey string) (st
 		traceUrl := fmt.Sprintf("http://localhost:%d/v1/logs?limit=1", port)
 		traceReq, _ := http.NewRequest("GET", traceUrl, nil)
 		traceReq.Header.Set("Authorization", "Bearer "+apiKey)
-		
+
 		if traceResp, traceErr := client.Do(traceReq); traceErr == nil {
 			defer traceResp.Body.Close()
 			if traceBytes, err := io.ReadAll(traceResp.Body); err == nil {
@@ -458,7 +458,7 @@ func callTool(name string, argsRaw json.RawMessage, port int, apiKey string) (st
 		sb.WriteString(fmt.Sprintf("### ⚡ Recent Request Traces (Last %d calls):\n\n", len(traces.Logs)))
 		sb.WriteString("| Trace ID | Target Route | Status | Latency | Cost | Complexity | Reason |\n")
 		sb.WriteString("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n")
-		
+
 		for _, t := range traces.Logs {
 			id := "N/A"
 			if t["RequestID"] != nil {

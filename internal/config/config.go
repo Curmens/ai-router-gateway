@@ -41,10 +41,10 @@ type ProvidersConfig struct {
 }
 
 type LiteLLMConfig struct {
-	Enabled   bool          `mapstructure:"enabled"`
-	APIKey    string        `mapstructure:"api_key"`
-	BaseURL   string        `mapstructure:"base_url"`
-	Models    []ModelConfig `mapstructure:"models"`
+	Enabled bool          `mapstructure:"enabled"`
+	APIKey  string        `mapstructure:"api_key"`
+	BaseURL string        `mapstructure:"base_url"`
+	Models  []ModelConfig `mapstructure:"models"`
 }
 
 type AgyConfig struct {
@@ -60,17 +60,17 @@ type ClaudeConfig struct {
 }
 
 type OpenAIConfig struct {
-	Enabled   bool          `mapstructure:"enabled"`
-	APIKey    string        `mapstructure:"api_key"`
-	BaseURL   string        `mapstructure:"base_url"`
-	Models    []ModelConfig `mapstructure:"models"`
+	Enabled bool          `mapstructure:"enabled"`
+	APIKey  string        `mapstructure:"api_key"`
+	BaseURL string        `mapstructure:"base_url"`
+	Models  []ModelConfig `mapstructure:"models"`
 }
 
 type GeminiConfig struct {
-	Enabled   bool          `mapstructure:"enabled"`
-	APIKey    string        `mapstructure:"api_key"`
-	BaseURL   string        `mapstructure:"base_url"`
-	Models    []ModelConfig `mapstructure:"models"`
+	Enabled bool          `mapstructure:"enabled"`
+	APIKey  string        `mapstructure:"api_key"`
+	BaseURL string        `mapstructure:"base_url"`
+	Models  []ModelConfig `mapstructure:"models"`
 }
 
 type OllamaConfig struct {
