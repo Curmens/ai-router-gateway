@@ -18,10 +18,11 @@ import (
 	"github.com/user1024/auto-router/internal/cache"
 	"github.com/user1024/auto-router/internal/config"
 	"github.com/user1024/auto-router/internal/db"
+	"github.com/user1024/auto-router/internal/graph"
 	"github.com/user1024/auto-router/internal/logger"
 	"github.com/user1024/auto-router/internal/provider"
-	"github.com/user1024/auto-router/internal/graph"
 	"github.com/user1024/auto-router/internal/router"
+	"github.com/user1024/auto-router/internal/settings"
 	"github.com/user1024/auto-router/internal/telemetry"
 	"github.com/user1024/auto-router/internal/ui"
 	"go.uber.org/zap"
@@ -570,7 +571,17 @@ func (s *APIServer) handleAdminUpdateProvider(c *gin.Context) {
 		return
 	}
 
+	// Persist to the filedb so the change survives restarts.
+	if err := settings.SaveProviders(c.Request.Context(), s.cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist settings: " + err.Error()})
+		return
+	}
+
+	// Refresh everything derived from provider config, not just the registry.
 	provider.InitProviders(s.cfg)
+	router.InitRegistry(s.cfg)
+	router.InitCircuitBreakers(s.cfg)
+
 	c.JSON(http.StatusOK, gin.H{"status": "updated", "provider": name})
 }
 
