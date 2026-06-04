@@ -16,6 +16,9 @@ func InitProviders(cfg *config.Config) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 
+	// Rebuild from scratch so providers disabled at runtime are dropped.
+	Registry = make(map[string]ChatProvider)
+
 	if cfg.Providers.OpenAI.Enabled {
 		Registry["openai"] = NewOpenAIProvider(cfg.Providers.OpenAI)
 	}
