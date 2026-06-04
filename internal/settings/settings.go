@@ -23,11 +23,12 @@ func Load(ctx context.Context, cfg *config.Config) error {
 		return SaveProviders(ctx, cfg)
 	}
 
-	var p config.ProvidersConfig
-	if err := json.Unmarshal([]byte(val), &p); err != nil {
+	// Unmarshal onto the YAML-loaded config so persisted values override, while
+	// fields absent from older JSON (e.g. a newly added provider) keep their
+	// YAML defaults instead of being zeroed.
+	if err := json.Unmarshal([]byte(val), &cfg.Providers); err != nil {
 		return fmt.Errorf("failed to unmarshal persisted providers: %w", err)
 	}
-	cfg.Providers = p
 	return nil
 }
 
