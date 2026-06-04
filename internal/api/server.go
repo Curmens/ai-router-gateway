@@ -593,9 +593,17 @@ func (s *APIServer) handleAdminTestProvider(c *gin.Context) {
 		return
 	}
 
+	// Test with a concrete model from the provider's config; "auto" is a routing
+	// keyword, not a real model, so sending it straight to the provider 404s.
+	model := s.firstModelForProvider(name)
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "no model configured for provider: " + name})
+		return
+	}
+
 	ctx := c.Request.Context()
 	resp, err := prov.Chat(ctx, provider.ChatRequest{
-		Model: "auto",
+		Model: model,
 		Messages: []provider.ChatMessage{
 			{Role: "user", Content: "Reply with exactly: OK"},
 		},
@@ -609,7 +617,29 @@ func (s *APIServer) handleAdminTestProvider(c *gin.Context) {
 	if len(resp.Choices) > 0 {
 		content = resp.Choices[0].Message.Content
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "response": content})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "model": model, "response": content})
+}
+
+// firstModelForProvider returns the first configured model name for a provider,
+// or "" if the provider is unknown or has no models configured.
+func (s *APIServer) firstModelForProvider(name string) string {
+	var models []config.ModelConfig
+	switch name {
+	case "openai":
+		models = s.cfg.Providers.OpenAI.Models
+	case "gemini":
+		models = s.cfg.Providers.Gemini.Models
+	case "ollama":
+		models = s.cfg.Providers.Ollama.Models
+	case "subscription":
+		models = s.cfg.Providers.Subscription.Models
+	case "agy":
+		models = s.cfg.Providers.Agy.Models
+	}
+	if len(models) > 0 {
+		return models[0].Name
+	}
+	return ""
 }
 
 func (s *APIServer) handleOrchestrationStatus(c *gin.Context) {
