@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -34,6 +35,7 @@ type APIServer struct {
 	failover     *router.FailoverManager
 	engine       *router.RoutingEngine
 	orchestrator *agent.Orchestrator
+	cfgMu        sync.RWMutex // guards reads/writes of cfg.Providers across requests
 }
 
 func NewAPIServer(cfg *config.Config, fm *router.FailoverManager, re *router.RoutingEngine, orch *agent.Orchestrator) *APIServer {
@@ -474,6 +476,9 @@ func (s *APIServer) handleAdminGetProviders(c *gin.Context) {
 		return k[:4] + strings.Repeat("*", len(k)-8) + k[len(k)-4:]
 	}
 
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+
 	c.JSON(http.StatusOK, gin.H{
 		"providers": []gin.H{
 			{
@@ -529,6 +534,11 @@ func (s *APIServer) handleAdminUpdateProvider(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Serialize the mutate + persist + refresh so concurrent admin updates
+	// (and reads in handleAdminGetProviders) don't race or lose writes.
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
 
 	switch name {
 	case "gemini":
@@ -595,7 +605,9 @@ func (s *APIServer) handleAdminTestProvider(c *gin.Context) {
 
 	// Test with a concrete model from the provider's config; "auto" is a routing
 	// keyword, not a real model, so sending it straight to the provider 404s.
+	s.cfgMu.RLock()
 	model := s.firstModelForProvider(name)
+	s.cfgMu.RUnlock()
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "no model configured for provider: " + name})
 		return
