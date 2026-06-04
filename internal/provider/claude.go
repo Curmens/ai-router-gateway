@@ -30,12 +30,12 @@ type claudeCLIUsage struct {
 }
 
 type claudeCLIResult struct {
-	Type    string          `json:"type"`
-	Subtype string          `json:"subtype"`
-	Result  string          `json:"result"`
-	IsError bool            `json:"is_error"`
-	CostUSD float64         `json:"total_cost_usd"`
-	Usage   claudeCLIUsage  `json:"usage"`
+	Type    string         `json:"type"`
+	Subtype string         `json:"subtype"`
+	Result  string         `json:"result"`
+	IsError bool           `json:"is_error"`
+	CostUSD float64        `json:"total_cost_usd"`
+	Usage   claudeCLIUsage `json:"usage"`
 }
 
 func (p *ClaudeProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
