@@ -24,44 +24,56 @@ func InitRegistry(cfg *config.Config) {
 
 	modelRegistry = make(map[string]RegistryModel)
 
-	for _, m := range cfg.Providers.OpenAI.Models {
-		modelRegistry[m.Name] = RegistryModel{
-			Name:                m.Name,
-			Provider:            "openai",
-			CostPer1kPrompt:     m.CostPer1kPrompt,
-			CostPer1kCompletion: m.CostPer1kCompletion,
+	// Only register models for enabled providers, so disabled ones are neither
+	// advertised by /v1/models nor selectable by explicit model routing.
+	if cfg.Providers.OpenAI.Enabled {
+		for _, m := range cfg.Providers.OpenAI.Models {
+			modelRegistry[m.Name] = RegistryModel{
+				Name:                m.Name,
+				Provider:            "openai",
+				CostPer1kPrompt:     m.CostPer1kPrompt,
+				CostPer1kCompletion: m.CostPer1kCompletion,
+			}
 		}
 	}
-	for _, m := range cfg.Providers.Gemini.Models {
-		modelRegistry[m.Name] = RegistryModel{
-			Name:                m.Name,
-			Provider:            "gemini",
-			CostPer1kPrompt:     m.CostPer1kPrompt,
-			CostPer1kCompletion: m.CostPer1kCompletion,
+	if cfg.Providers.Gemini.Enabled {
+		for _, m := range cfg.Providers.Gemini.Models {
+			modelRegistry[m.Name] = RegistryModel{
+				Name:                m.Name,
+				Provider:            "gemini",
+				CostPer1kPrompt:     m.CostPer1kPrompt,
+				CostPer1kCompletion: m.CostPer1kCompletion,
+			}
 		}
 	}
-	for _, m := range cfg.Providers.Ollama.Models {
-		modelRegistry[m.Name] = RegistryModel{
-			Name:                m.Name,
-			Provider:            "ollama",
-			CostPer1kPrompt:     m.CostPer1kPrompt,
-			CostPer1kCompletion: m.CostPer1kCompletion,
+	if cfg.Providers.Ollama.Enabled {
+		for _, m := range cfg.Providers.Ollama.Models {
+			modelRegistry[m.Name] = RegistryModel{
+				Name:                m.Name,
+				Provider:            "ollama",
+				CostPer1kPrompt:     m.CostPer1kPrompt,
+				CostPer1kCompletion: m.CostPer1kCompletion,
+			}
 		}
 	}
-	for _, m := range cfg.Providers.Subscription.Models {
-		modelRegistry[m.Name] = RegistryModel{
-			Name:                m.Name,
-			Provider:            "subscription",
-			CostPer1kPrompt:     m.CostPer1kPrompt,
-			CostPer1kCompletion: m.CostPer1kCompletion,
+	if cfg.Providers.Subscription.Enabled {
+		for _, m := range cfg.Providers.Subscription.Models {
+			modelRegistry[m.Name] = RegistryModel{
+				Name:                m.Name,
+				Provider:            "subscription",
+				CostPer1kPrompt:     m.CostPer1kPrompt,
+				CostPer1kCompletion: m.CostPer1kCompletion,
+			}
 		}
 	}
-	for _, m := range cfg.Providers.Agy.Models {
-		modelRegistry[m.Name] = RegistryModel{
-			Name:                m.Name,
-			Provider:            "agy",
-			CostPer1kPrompt:     m.CostPer1kPrompt,
-			CostPer1kCompletion: m.CostPer1kCompletion,
+	if cfg.Providers.Agy.Enabled {
+		for _, m := range cfg.Providers.Agy.Models {
+			modelRegistry[m.Name] = RegistryModel{
+				Name:                m.Name,
+				Provider:            "agy",
+				CostPer1kPrompt:     m.CostPer1kPrompt,
+				CostPer1kCompletion: m.CostPer1kCompletion,
+			}
 		}
 	}
 }
